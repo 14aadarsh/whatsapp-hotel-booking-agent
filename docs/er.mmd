@@ -1,0 +1,46 @@
+erDiagram
+  hb_guests ||--o{ hb_bookings : "guest_id"
+  hb_bookings ||--|{ hb_booking_rooms : "booking_id"
+  hb_rooms ||--o{ hb_booking_rooms : "room_id"
+  hb_room_types ||--o{ hb_rooms : "room_type_id"
+  hb_guests {
+    int id PK
+    varchar phone UK
+    varchar guest_name
+    enum id_proof_type "AADHAAR|PASSPORT|DRIVING_LICENSE|VOTER_ID"
+    varchar id_proof_number "masked, last 4 only"
+  }
+  hb_bookings {
+    int id PK
+    varchar booking_code UK
+    int guest_id FK
+    date check_in
+    date check_out
+    int days "generated: DATEDIFF"
+    tinyint total_guests
+    decimal subtotal_amount
+    decimal tax_amount
+    decimal total_amount "invoice grand total"
+    enum status
+    varchar approval_token UK
+    datetime hold_expires_at
+    tinyint guest_notified
+  }
+  hb_booking_rooms {
+    int id PK
+    int booking_id FK
+    int room_id FK
+    tinyint guests_assigned
+    decimal rate_per_night
+  }
+  hb_rooms {
+    int id PK
+    varchar room_no UK
+    tinyint room_type_id FK
+  }
+  hb_room_types {
+    tinyint id PK
+    varchar code UK
+    decimal rate_per_night
+    tinyint max_guests
+  }

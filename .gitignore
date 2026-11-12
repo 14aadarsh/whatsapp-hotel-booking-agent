@@ -1,0 +1,7 @@
+# secrets and local files - never commit
+.env
+*.key
+*credentials*
+*.pem
+screenshots_raw/
+.DS_Store

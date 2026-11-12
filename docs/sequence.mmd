@@ -1,0 +1,28 @@
+sequenceDiagram
+  autonumber
+  actor G as Guest
+  participant B as Bot (n8n Brain)
+  participant DB as MySQL
+  actor R as Receptionist
+  G->>B: "hi"
+  B-->>G: Welcome menu (book / rates / status / cancel / receptionist)
+  G->>B: "i want to book 2 AC rooms, 5 to 7 Nov"
+  B->>DB: availability + exact total
+  DB-->>B: free rooms, total Rs 12,000
+  B-->>G: Rooms available, total Rs 12,000. How many guests?
+  G->>B: guests, name, ID type + number
+  B->>B: validate ID (format + Aadhaar checksum)
+  B-->>G: Summary (ID masked). Reply YES to send the request
+  G->>B: "Yes"
+  B->>DB: hb_create_booking (one transaction:<br/>lock rooms, re-check, guest, header, room lines)
+  B-->>G: Request received, NOT confirmed yet
+  loop every 20 seconds
+    B->>DB: new PENDING requests?
+  end
+  B->>R: Alert + approval link
+  R->>B: opens link, sees full details
+  R->>B: Approve (or Reject + reason)
+  B->>DB: status = CONFIRMED / REJECTED
+  B-->>G: Booking CONFIRMED (or rejected + reason)
+  Note over B,DB: guest_notified flag set only after the send succeeds,<br/>a sweeper retries failed notifications
+  Note over B,DB: No answer in 30 min: request EXPIRES and rooms are released

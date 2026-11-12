@@ -1,0 +1,18 @@
+flowchart TB
+  G([Guest on WhatsApp]) <--> M[Meta WhatsApp<br/>Cloud API]
+  M -->|webhook| IN[n8n: webhook, dedupe,<br/>session, language detection]
+  IN --> LC[Load Context<br/>hotel settings + guest's bookings]
+  LC --> BR{{Brain: rule-based<br/>conversation state machine}}
+  BR -->|menu, questions, status,<br/>summaries| M
+  BR -->|check / create / cancel SQL| DB[(MySQL, normalized<br/>guests, room types, rooms,<br/>bookings + booking rooms)]
+  DB --> BP[Brain Post:<br/>DB answer to next guest message]
+  BP --> M
+  BR -->|general question only| LLM[LLM: FAQ answers<br/>no booking tools]
+  LLM --> GD[Reply Guard] --> M
+  BR -->|menu 5| RC
+  SCH[Scheduler, every 20 s<br/>alerts + hold expiry] <--> DB
+  SCH -->|alert + approval link| RC([Receptionist<br/>WhatsApp])
+  RC -->|opens link:<br/>Approve / Reject| AP[Approval page<br/>+ decision webhook]
+  AP <--> DB
+  AP -->|CONFIRMED / rejected| M
+  SCH -->|retry sweeper:<br/>guest_notified = 0| M

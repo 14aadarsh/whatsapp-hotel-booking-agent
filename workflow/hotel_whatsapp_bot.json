@@ -1,0 +1,1711 @@
+{
+  "name": "Hotel WhatsApp Bot (MySQL) v6",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "hotel-wa",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f82b57c5-02f1-4868-9edc-6940891b105f",
+      "name": "WA Verify",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -1792
+      ],
+      "webhookId": "97d43ff7-3f57-46b0-b406-b352ff17dcc4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $input.first().json.query || {};\nconst ok = q['hub.mode'] === 'subscribe' && q['hub.verify_token'] === 'YOUR_VERIFY_TOKEN';\nreturn [{ json: { ok, reply: ok ? String(q['hub.challenge']) : 'forbidden' } }];"
+      },
+      "id": "538aa15c-2ca3-4fba-8f89-b01520758c48",
+      "name": "Check Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        -1792
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.reply }}",
+        "options": {
+          "responseCode": "={{ $json.ok ? 200 : 403 }}"
+        }
+      },
+      "id": "e2068b7b-59c2-4792-80b3-f5b523ab95d0",
+      "name": "Respond Verify",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        336,
+        -1792
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hotel-wa",
+        "options": {}
+      },
+      "id": "7ada1549-735c-41eb-bde5-d7fc866771fb",
+      "name": "WA Messages",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        -1552
+      ],
+      "webhookId": "5248ce78-6504-4e13-8be5-d72197928b5e"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst value = (((body.entry || [])[0] || {}).changes || [])[0]?.value || {};\nconst msg = (value.messages || [])[0];\nif (!msg) return [];                        // status updates (sent/delivered/read) -> ignore\nconst sd = $getWorkflowStaticData('global');\nsd.seen = sd.seen || [];\nif (sd.seen.includes(msg.id)) return [];    // Meta retry -> ignore duplicate\nsd.seen.push(msg.id);\nif (sd.seen.length > 200) sd.seen = sd.seen.slice(-100);\nsd.busy = sd.busy || {};\nif (sd.busy[String(msg.from)] && Date.now() - sd.busy[String(msg.from)] < 150000) return [];   // retry in progress -> ignore follow-ups\nconst text = msg.type === 'text' ? (msg.text?.body || '').trim() : '';\nconst norm = text.toLowerCase().replace(/\\s+/g, ' ');\nconst isTrigger = 1;   // any message starts/keeps the session\n// --- language detection (sticky for short replies like \"yes\" / \"ok\") ---\nsd.lang = sd.lang || {};\nconst from = String(msg.from);\nconst HIN = /\\b(hai|hain|hu|hoon|kya|kitna|kitne|kitni|chahiye|chahie|chahiyen|mujhe|mereko|muje|karo|karna|karni|kardo|krdo|krna|aap|aapka|aapki|apka|apki|nahi|nahin|nhi|haan|han|bhai|batao|bata|bataiye|ka|ki|ke|mera|mere|meri|kal|aaj|parso|hoga|rahega|rhega|bhi|abhi|lunga|lungi|dena|dijiye|wala|wali|mein|mai|hum|hame|humein|kab|kaha|kaise|kaun|kon|ek|teen|char|sirf|lekin|aur|ya|toh|kitne din|raat|din|paisa|rupaye|theek|thik|sahi|accha|achha|bilkul|zaroor|jaldi|dobara|phir|isme|usme|yeh|woh)\\b/gi;\nconst ENG = /\\b(the|i|we|want|book|booking|room|rooms|price|please|how|what|is|are|you|need|for|my|can|do|does|have|available|check|name|yes|no|hello|hi|hey|tell|me|cancel|status|from|till|tomorrow|today|night|nights|guests|guest|with|and|of|in|on|at|a|an)\\b/gi;\nlet langCode = sd.lang[from] || 'eng';\nif (/[ऀ-ॿ]/.test(text)) langCode = 'dev';\nelse if (text) {\n  const h = (text.match(HIN) || []).length, e = (text.match(ENG) || []).length;\n  if (h >= 1 && h >= e - 1 && /\\b(hai|hain|kya|kitna|kitne|kitni|chahiye|chahie|mujhe|mereko|karo|karna|aap|aapka|nahi|nahin|nhi|haan|han|bhai|batao|bata|bataiye|mera|mere|meri|hoga|rahega|lunga|dijiye|kaise|kese|kaisa|kyu|kyun|hua|kab|kaha|theek|thik|accha|achha|bilkul|zaroor)\\b/i.test(text)) langCode = 'hin';\n  else if (e >= 2 && h === 0) langCode = 'eng';\n  else if (h === 0 && /^(hello|hi|hey|hii+|good (morning|evening|afternoon))\\b/i.test(text)) langCode = 'eng';\n  else if (e >= 3 && e > h * 2) langCode = 'eng';\n}\nsd.lang[from] = langCode;\nconst LN = { eng: ['ENGLISH', 'Reply fully in English. No Hindi words.', 'english'],\n             hin: ['HINGLISH', 'Reply in Hindi written in Roman letters mixed with common English words (rooms, check-in, total). Example: \"Aapko kaun si dates chahiye?\"', 'hinglish'],\n             dev: ['HINDI', 'Reply in Hindi in Devanagari script.', 'hindi'] }[langCode];\nconst agent_text = '[Reply language: ' + LN[0] + ' - ' + LN[1] + ' Use guest_language = ' + LN[2] + ' in tools.]\\n' + text;\n// --- candidate ID strings typed by the guest (stored only as SHA-256 hashes, see Session Update) ---\nconst words = text.toUpperCase().split(/\\s+/).map(x => x.replace(/[^A-Z0-9]/g, '')).filter(Boolean);\nconst cand = new Set();\nfor (let i = 0; i < words.length; i++) { let s = ''; for (let l = 0; l < 4 && i + l < words.length; l++) { s += words[i + l]; if (s.length >= 6 && s.length <= 20) cand.add(s); } }\nconst whole = words.join(''); if (whole.length >= 6 && whole.length <= 20) cand.add(whole);\nconst idtok = Array.from(cand).slice(0, 40);\nreturn [{ json: { from: msg.from, type: msg.type, text, agent_text, lang: langCode, idtok, id: msg.id, isTrigger } }];"
+      },
+      "id": "2bb8e72d-67eb-4b75-9a09-656895a99587",
+      "name": "Clean Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        -1552
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO hb_sessions (phone, active, started_at, last_active)\nVALUES ('{{ String($('Clean Message').first().json.from).replace(/\\D/g,'') }}', 1, NOW(), NOW())\nON DUPLICATE KEY UPDATE\n  started_at  = IF(hb_sessions.active = 1 AND hb_sessions.last_active > NOW() - INTERVAL 3 HOUR, hb_sessions.started_at, NOW()),\n  active      = 1,\n  last_active = NOW();\n{{ (() => { const j = $('Clean Message').first().json; const ph = String(j.from).replace(/\\D/g,''); return (j.idtok && j.idtok.length) ? \"INSERT INTO hb_msg_tokens (phone, token_hash) VALUES \" + j.idtok.map(t => \"('\" + ph + \"', SHA2('\" + t + \"', 256))\").join(',') + \";\" : \"\"; })() }}\nSELECT 1 AS ok;",
+        "options": {}
+      },
+      "id": "da18a9f1-8cb9-4e7d-b614-7c8ed0b08dd2",
+      "name": "Session Update",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        336,
+        -1552
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS ok, UNIX_TIMESTAMP(started_at) AS sid FROM hb_sessions WHERE phone = '{{ String($('Clean Message').first().json.from).replace(/\\D/g,'') }}' AND active = 1",
+        "options": {}
+      },
+      "id": "660cce7f-0fc7-431f-ac49-33d724abc94e",
+      "name": "Session Get",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        560,
+        -1552
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e64cc546-5acd-4de8-8f73-9ddaa416a714",
+              "leftValue": "={{ String($json.ok) }}",
+              "rightValue": "1",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "726bc02c-49bc-49b6-89b5-724f21c27999",
+      "name": "Session Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        768,
+        -1552
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ebc48e91-cded-4035-81d5-84be13eff1d8",
+              "leftValue": "={{ $('Clean Message').first().json.type }}",
+              "rightValue": "text",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "95f7da27-5dd0-426a-bae5-42ab2d93c631",
+      "name": "Is Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        992,
+        -1552
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Clean Message').first().json.agent_text }}",
+        "options": {
+          "systemMessage": "=You are the friendly WhatsApp front-desk assistant of a hotel (rooms only). The booking itself is handled by the system with a fixed menu flow, so you ONLY answer the guest's general questions. India time now: {{ $now.setZone('Asia/Kolkata').toFormat('cccc, dd LLL yyyy, hh:mm a') }}.\n\nHOTEL FACTS\n- 15 AC rooms and 15 Non-AC rooms. Rooms only: no food, restaurant, taxi, tours or other services.\n- AC Rs 3000 per night, Non-AC Rs 1800 per night (one night = 24 hours). No extra charge for an extra person within the room capacity.\n- Maximum 4 guests per room. Check-out 11:00 AM. Payment at the hotel (no advance).\n- Original photo ID (Aadhaar, Passport, Driving Licence or Voter ID) is required at check-in.\n- Every booking must be approved by the receptionist. A request is held for 30 minutes. Cancellation is possible only within 6 hours of booking.\n\nHOW TO ANSWER\n- Reply in 1 to 3 short sentences, warm and polite like a human receptionist. Never say you cannot help with bookings: if the guest wants to book, check availability, see status or cancel, tell them to send \"menu\" or the number 1 (book), 3 (status), 4 (cancel), 5 (receptionist).\n- Answer only from the facts above. If you do not know (parking, wifi, location, special requests), say the receptionist will confirm and suggest sending 5 to talk to them. Never invent facts, prices, availability or booking codes.\n- Never claim a booking is confirmed or created.\n- You do NOT know the guest's current booking details (dates, rooms, nights, total). Never explain or calculate a total or amount for a booking; say the system shows it in the booking summary and suggest sending 'menu' or 5 for the receptionist. Only quote the fixed rates above.\n- LANGUAGE: every guest message starts with a line like [Reply language: ...]. Follow it exactly and never repeat that line. ENGLISH = English only. HINGLISH = Hindi in Roman letters with common English words. HINDI = Hindi in Devanagari.\n- Greetings and thanks: answer warmly and add one short offer to help, e.g. \"You're welcome! Send 'menu' anytime to book a room or check your booking.\"\n"
+        }
+      },
+      "id": "a665bf77-9617-4dc9-a3d3-5aa46e26bc65",
+      "name": "Hotel AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1888,
+        -1760
+      ],
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Clean Message').first().json.from }}",
+        "textBody": "={{ $json.output || 'Sorry, kuch technical issue aa gaya. Please thodi der baad try karein.' }}",
+        "additionalFields": {}
+      },
+      "id": "def4b902-5a37-4df4-83a2-d1ad2f09fd9b",
+      "name": "Send reply",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        2560,
+        -1760
+      ],
+      "webhookId": "565c99b4-a9ff-43d1-8798-ea46c2a8b97f",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Clean Message').first().json.from }}",
+        "textBody": "Abhi main sirf text message samajh pata hu. Please apni baat text me likh kar bhejein.",
+        "additionalFields": {}
+      },
+      "id": "1899c37c-63bd-4dce-bbc2-638960d97773",
+      "name": "Send non-text reply",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        -1856
+      ],
+      "webhookId": "7b22d2b5-501d-4ce0-8903-79a2ec8cbbb7",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const id = $('Clean Message').first().json.id;\nconst from = String($('Clean Message').first().json.from);\nconst text = String($('Clean Message').first().json.text || '');\nconst sd = $getWorkflowStaticData('global');\nsd.tries = sd.tries || {};\nsd.busy = sd.busy || {};\nsd.lang = sd.lang || {};\nconst lang = sd.lang[from] || 'eng';\nsd.tries[id] = (sd.tries[id] || 0) + 1;\nsd.busy[from] = Date.now();\nconst keys = Object.keys(sd.tries);\nif (keys.length > 100) for (const k of keys.slice(0, 50)) delete sd.tries[k];\nconst n = sd.tries[id];\nconst err = JSON.stringify($input.first().json).toLowerCase();\nconst limited = err.includes('rate limit') || err.includes('429') || err.includes('too many requests');\n// how long Groq says to wait (\"try again in 14.3s\" / \"1m2.5s\" / \"850ms\") + 2 s safety, between 6 and 30 s\nlet wait = 15;\nconst mm = err.match(/try again in (?:(\\d+)m)?([\\d.]+)(ms|s)/);\nif (mm) wait = (mm[1] ? Number(mm[1]) * 60 : 0) + (mm[3] === 'ms' ? Number(mm[2]) / 1000 : Number(mm[2]));\nwait = Math.min(30, Math.max(6, Math.ceil(wait) + 2));\nreturn [{ json: { n, retry: limited && n <= 4, first: n === 1, lang, wait } }];"
+      },
+      "id": "8e54a191-4a27-4450-bfb4-f131cf9694cc",
+      "name": "Retry Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        -1360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5ead17dc-1754-44f6-85ee-fcf4daf9ae63",
+              "leftValue": "={{ String($json.retry) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b5baa739-8bd4-4519-9e69-e3a5f2f8cc2e",
+      "name": "Retry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1616,
+        -1360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "344f86b6-b83d-45fa-9ce7-d369d061a3e5",
+              "leftValue": "={{ String($json.first) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0802eb29-204e-4438-b5ac-fdee1b867301",
+      "name": "First time?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1856,
+        -1488
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Clean Message').first().json.from }}",
+        "textBody": "={{ ({ dev: 'कृपया एक मिनट रुकिए, मैं अभी जवाब देता हूँ।', hin: 'Ek minute, abhi jawab deta hu.', eng: 'One moment please, I will reply in a few seconds.' })[$json.lang || 'eng'] }}",
+        "additionalFields": {}
+      },
+      "id": "65401212-1f9c-4ad4-b05e-ee9acfe426c1",
+      "name": "Send wait",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1840,
+        -1664
+      ],
+      "webhookId": "946b29bc-452b-424a-b973-568356371c70",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Clean Message').first().json.from }}",
+        "textBody": "={{ ({ dev: 'अभी सिस्टम व्यस्त है। कृपया 1 मिनट बाद फिर संदेश भेजें।', hin: 'Sorry, abhi system busy hai. Please 1 minute baad dobara message bhejein.', eng: 'Sorry, the system is busy. Please message again in a minute.' })[$json.lang] }}",
+        "additionalFields": {}
+      },
+      "id": "e190c45e-80ca-4af7-9c2c-27d736e8fb05",
+      "name": "Send busy",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1872,
+        -1184
+      ],
+      "webhookId": "c396a9aa-56c0-4d27-bcfd-f954730763f0",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Retry Check').first().json.wait }}",
+        "unit": "seconds"
+      },
+      "id": "4a4a6939-d984-47b0-973a-fc1ab4b83f72",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2192,
+        -1472
+      ],
+      "webhookId": "28c5dfba-2682-4280-9654-b34a54c3e25a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst from = String($('Clean Message').first().json.from);\nif (sd.busy) delete sd.busy[from];\nreturn $input.all();"
+      },
+      "id": "b007e396-227b-4a4a-95a4-c54fa9699b5e",
+      "name": "Clear Busy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2784,
+        -1760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst from = String($('Clean Message').first().json.from);\nif (sd.busy) delete sd.busy[from];\nreturn $input.all();"
+      },
+      "id": "13731993-b6d3-4259-92bc-6ada1ca3159f",
+      "name": "Clear Busy 2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        -1184
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 20
+            }
+          ]
+        }
+      },
+      "id": "bdab9441-1c98-408d-b03b-694e2e7be8a4",
+      "name": "Every 20 seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        144,
+        -640
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_code, guest_name, phone, room_details, rooms_count,\n  DATE_FORMAT(check_in, '%d %b %Y') AS ci, DATE_FORMAT(check_out, '%d %b %Y') AS co, days,\n  total_guests AS guests, total_amount AS total, approval_token AS token,\n  CONCAT(IFNULL(id_proof_type,'-'), ' ', IFNULL(id_proof_number,'')) AS id_proof,\n  TIMESTAMPDIFF(MINUTE, NOW(), hold_expires_at) AS mins_left,\n  (SELECT cfg_value FROM hb_config WHERE cfg_key = 'receptionist_phone' LIMIT 1) AS rec_phone,\n  (SELECT TRIM(TRAILING '/' FROM cfg_value) FROM hb_config WHERE cfg_key = 'public_url' LIMIT 1) AS public_url\nFROM hb_booking_summary\nWHERE raw_status = 'PENDING' AND alerted = 0 AND hold_expires_at > NOW()",
+        "options": {}
+      },
+      "id": "a0eb0a79-ef42-4d06-9f26-61a7e1d89b26",
+      "name": "Get Pending",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        624,
+        -752
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ String($json.rec_phone).replace(/\\D/g,'') }}",
+        "textBody": "=🛎️ New booking request #{{ $json.booking_code }}\nGuest: {{ $json.guest_name }} (+{{ $json.phone }})\nID: {{ $json.id_proof }}\nRooms: {{ $json.room_details }}\n{{ $json.ci }} to {{ $json.co }} ({{ $json.days }} day(s))\nGuests: {{ $json.guests }} | Total: Rs {{ Number($json.total).toLocaleString('en-IN') }}\n\n👉 Open to approve / reject:\n{{ $json.public_url }}/webhook/hotel-approve?code={{ $json.booking_code }}&t={{ $json.token }}\n\n(Expires in {{ $json.mins_left }} min)",
+        "additionalFields": {}
+      },
+      "id": "3d0a0ee3-1771-41ec-aabe-434f3bb8661f",
+      "name": "Alert Receptionist",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        -752
+      ],
+      "webhookId": "6b1b274b-3ccf-4cda-a26f-0be113099ff7",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE hb_bookings SET alerted = 1 WHERE booking_code = '{{ String($('Get Pending').item.json.booking_code).replace(/[^A-Za-z0-9]/g,'') }}'",
+        "options": {}
+      },
+      "id": "2e6a389b-6501-45c5-80c9-7ba9ab4b936c",
+      "name": "Mark Alerted",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1648,
+        -752
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM hb_msg_tokens WHERE created_at < NOW() - INTERVAL 1 DAY;\nUPDATE hb_bookings SET status = 'EXPIRED', decided_at = NOW() WHERE status = 'PENDING' AND hold_expires_at <= NOW();\nSELECT 1 AS ok;",
+        "options": {}
+      },
+      "id": "5c0a5f67-75ea-400c-9001-70bf9334e721",
+      "name": "Mark Expired",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        624,
+        -544
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "hotel-approve",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f718c4d0-99c6-4056-af7b-6580169b3720",
+      "name": "Approval Page",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        144,
+        -272
+      ],
+      "webhookId": "9a019d79-a3a3-493d-b5c8-38001403290f"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_code, guest_name, phone,\n  IF(id_proof_type IS NULL, 'Not provided', CONCAT(id_proof_type, ' ', id_proof_number)) AS id_proof,\n  guest_language, room_details, rooms_count,\n  DATE_FORMAT(check_in, '%a, %d %b %Y') AS ci, DATE_FORMAT(check_out, '%a, %d %b %Y') AS co, days,\n  total_guests AS guests, total_amount AS total, status, approval_token AS token, reject_reason,\n  DATE_FORMAT(created_at, '%d %b %Y, %I:%i %p') AS requested_at,\n  GREATEST(TIMESTAMPDIFF(MINUTE, NOW(), hold_expires_at), 0) AS mins_left,\n  guest_notified, IFNULL(TIMESTAMPDIFF(SECOND, decided_at, NOW()), 999999) AS decided_ago,\n  (SELECT TRIM(TRAILING '/' FROM cfg_value) FROM hb_config WHERE cfg_key = 'public_url' LIMIT 1) AS public_url\nFROM hb_booking_summary\nWHERE booking_code = '{{ String($json.query.code || '').replace(/[^A-Za-z0-9]/g,'').toUpperCase() }}'\n  AND approval_token = '{{ String($json.query.t || '').replace(/[^A-Za-z0-9]/g,'') }}'\n  AND LENGTH(approval_token) >= 16",
+        "options": {}
+      },
+      "id": "d34e4496-df40-4d08-b911-a6e15f6dc547",
+      "name": "Load Booking",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        656,
+        -272
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const MODE = 'page';\n// Shared by \"Render Page\" (MODE='page') and \"Decision Result\" (MODE='decision'). MODE is prepended by the builder.\nconst b = $input.first().json || {};\nconst esc = s => String(s == null ? '' : s).replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst inr = n => 'Rs ' + Number(n || 0).toLocaleString('en-IN');\nconst valid = !!(b.booking_code && b.token);\n\nfunction page(title, inner) {\n  return '<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>' + esc(title) + '</title>' +\n'<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f3f5f8;margin:0;padding:16px;color:#1b2430}' +\n'.card{max-width:460px;margin:20px auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 2px 12px rgba(0,0,0,.08)}' +\n'h2{margin:0 0 4px;font-size:20px}.sub{color:#6b7683;font-size:13px;margin-bottom:12px}' +\n'.badge{display:inline-block;padding:4px 10px;border-radius:99px;font-size:13px;font-weight:600;margin:4px 0 8px}' +\n'.p{background:#fff3d6;color:#8a5a00}.c{background:#dff5e7;color:#14703a}.r{background:#fde2e2;color:#a12626}.g{background:#e8ebef;color:#4a5560}' +\n'table{width:100%;border-collapse:collapse;margin:8px 0 16px}td{padding:8px 0;border-bottom:1px solid #eef0f3;font-size:15px;vertical-align:top}td:first-child{color:#6b7683;width:34%}' +\n'small{color:#6b7683}textarea{width:100%;box-sizing:border-box;border:1px solid #cfd5dc;border-radius:8px;padding:9px;font:inherit;margin-bottom:12px}' +\n'button{width:100%;border:0;border-radius:10px;padding:14px;font-size:16px;font-weight:600;color:#fff;margin-bottom:10px;cursor:pointer}.ok{background:#1e8e4e}.no{background:#c93a3a}' +\n'</style></head><body><div class=\"card\">' + inner + '</div></body></html>';\n}\nconst STATUS = { PENDING: ['p', 'Waiting for approval'], CONFIRMED: ['c', 'Confirmed'], REJECTED: ['r', 'Rejected'], EXPIRED: ['g', 'Expired'], CANCELLED: ['g', 'Cancelled by guest'] };\nfunction details(x) {\n  return '<table>' +\n    '<tr><td>Guest</td><td><b>' + esc(x.guest_name) + '</b><br><small>+' + esc(x.phone) + '</small></td></tr>' +\n    '<tr><td>ID proof</td><td>' + esc(x.id_proof) + '</td></tr>' +\n    '<tr><td>Rooms</td><td>' + esc(x.room_details) + '<br><small>Total rooms: ' + esc(x.rooms_count) + '</small></td></tr>' +\n    '<tr><td>Check-in</td><td>' + esc(x.ci) + '</td></tr>' +\n    '<tr><td>Check-out</td><td>' + esc(x.co) + ', 11:00 AM<br><small>' + esc(x.days) + ' day(s)</small></td></tr>' +\n    '<tr><td>Guests</td><td>' + esc(x.guests) + '</td></tr>' +\n    '<tr><td>Total</td><td><b>' + esc(inr(x.total)) + '</b><br><small>pay at hotel</small></td></tr>' +\n    '<tr><td>Requested</td><td>' + esc(x.requested_at) + '</td></tr></table>';\n}\nfunction head(x) {\n  const s = STATUS[x.status] || ['g', x.status];\n  return '<h2>Booking #' + esc(x.booking_code) + '</h2><span class=\"badge ' + s[0] + '\">' + esc(s[1]) + '</span>';\n}\nconst invalid = page('Invalid link', '<h2>Invalid link</h2><div class=\"sub\">This approval link is not valid.</div>');\n\nif (MODE === 'page') {\n  if (!valid) return [{ json: { html: invalid } }];\n  let inner = head(b) + details(b);\n  if (b.status === 'PENDING') {\n    inner += '<div class=\"sub\">Auto-expires in ' + esc(b.mins_left) + ' min. Rooms are held until then.</div>' +\n      '<form method=\"GET\" action=\"' + esc(b.public_url) + '/webhook/hotel-decide\">' +\n      '<input type=\"hidden\" name=\"code\" value=\"' + esc(b.booking_code) + '\"><input type=\"hidden\" name=\"t\" value=\"' + esc(b.token) + '\">' +\n      '<textarea name=\"reason\" rows=\"2\" placeholder=\"Reject reason (optional, sent to guest)\"></textarea>' +\n      '<button class=\"ok\" type=\"submit\" name=\"decision\" value=\"approve\">✅ Approve booking</button>' +\n      '<button class=\"no\" type=\"submit\" name=\"decision\" value=\"reject\">❌ Reject</button></form>';\n  } else {\n    inner += '<div class=\"sub\">No action needed.' + (b.reject_reason ? ' Reason: ' + esc(b.reject_reason) : '') + '</div>';\n  }\n  return [{ json: { html: page('Booking ' + b.booking_code, inner) } }];\n}\n\n// MODE === 'decision'\nconst q = $('Decide Webhook').first().json.query || {};\nconst changed = Number(($('Apply Decision').first().json || {}).affectedRows) > 0;\nif (!valid) return [{ json: { html: invalid, changed: false } }];\nconst approved = b.status === 'CONFIRMED';\nlet banner;\nif (changed) banner = approved ? '<div class=\"sub\"><b>✅ Approved.</b> The guest has been notified on WhatsApp.</div>' : '<div class=\"sub\"><b>❌ Rejected.</b> The guest has been notified on WhatsApp.</div>';\nelse if (b.status === 'EXPIRED') banner = '<div class=\"sub\"><b>⏰ Expired.</b> The hold time is over and the rooms were released, so it can not be approved now.</div>';\nelse banner = '<div class=\"sub\"><b>Already handled.</b> No change was made.</div>';\nconst html = page('Booking ' + b.booking_code, head(b) + banner + details(b));\n\nlet msg = '';\nif (changed && approved) {\n  msg = '✅ Your booking is CONFIRMED! / Aapki booking confirm ho gayi hai.\\n' +\n    'Code: ' + b.booking_code + '\\nRooms: ' + b.room_type + ' x ' + b.rooms_count + ' (Room ' + b.rooms + ')\\n' +\n    'Check-in: ' + b.ci + '\\nCheck-out: ' + b.co + ', 11:00 AM\\nTotal: ' + inr(b.total) + ' (pay at hotel)\\n' +\n    'Please carry your original photo ID. / Original photo ID saath layein.';\n} else if (changed) {\n  const why = b.reject_reason ? ' Reason: ' + b.reject_reason + '.' : '';\n  msg = 'Sorry, your booking request ' + b.booking_code + ' could not be approved.' + why + ' Message us to try other dates or room type. / ' +\n    'Maaf kijiye, aapki booking request ' + b.booking_code + ' approve nahi ho saki.' + why + ' Dusri dates ya room type ke liye message karein.';\n}\nreturn [{ json: { html, changed, phone: b.phone, msg } }];\n"
+      },
+      "id": "a956ee91-3bc9-40d0-a62f-bb95c124739b",
+      "name": "Render Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -272
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c059f372-0644-472f-a471-571d4f925a12",
+      "name": "Respond Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        -272
+      ]
+    },
+    {
+      "parameters": {
+        "path": "hotel-decide",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8944dd5f-b975-4641-8590-633412a53225",
+      "name": "Decide Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        144,
+        -32
+      ],
+      "webhookId": "c20553e0-a445-4681-bace-d04c483a6000"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE hb_bookings SET status = IF('{{ ['approve','reject'].includes($json.query.decision) ? $json.query.decision : 'none' }}' = 'approve', 'CONFIRMED', 'REJECTED'), decided_at = NOW(), reject_reason = NULLIF('{{ String($json.query.reason || '').replace(/\\\\/g,'\\\\\\\\').replace(/'/g,\"\\\\'\").replace(/[\\r\\n]+/g,' ').slice(0,150) }}', '')\nWHERE booking_code = '{{ String($json.query.code || '').replace(/[^A-Za-z0-9]/g,'').toUpperCase() }}'\n  AND approval_token = '{{ String($json.query.t || '').replace(/[^A-Za-z0-9]/g,'') }}' AND LENGTH(approval_token) >= 16\n  AND status = 'PENDING' AND hold_expires_at > NOW() AND '{{ ['approve','reject'].includes($json.query.decision) ? $json.query.decision : 'none' }}' IN ('approve','reject')",
+        "options": {}
+      },
+      "id": "f2d6f18f-75c7-4ad7-9429-2a8a6128f3be",
+      "name": "Apply Decision",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        384,
+        -32
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_code, guest_name, phone,\n  IF(id_proof_type IS NULL, 'Not provided', CONCAT(id_proof_type, ' ', id_proof_number)) AS id_proof,\n  guest_language, room_details, rooms_count,\n  DATE_FORMAT(check_in, '%a, %d %b %Y') AS ci, DATE_FORMAT(check_out, '%a, %d %b %Y') AS co, days,\n  total_guests AS guests, total_amount AS total, status, approval_token AS token, reject_reason,\n  DATE_FORMAT(created_at, '%d %b %Y, %I:%i %p') AS requested_at,\n  GREATEST(TIMESTAMPDIFF(MINUTE, NOW(), hold_expires_at), 0) AS mins_left,\n  guest_notified, IFNULL(TIMESTAMPDIFF(SECOND, decided_at, NOW()), 999999) AS decided_ago,\n  (SELECT TRIM(TRAILING '/' FROM cfg_value) FROM hb_config WHERE cfg_key = 'public_url' LIMIT 1) AS public_url\nFROM hb_booking_summary\nWHERE booking_code = '{{ String($(\"Decide Webhook\").first().json.query.code || \"\").replace(/[^A-Za-z0-9]/g,'').toUpperCase() }}'\n  AND approval_token = '{{ String($(\"Decide Webhook\").first().json.query.t || \"\").replace(/[^A-Za-z0-9]/g,'') }}'\n  AND LENGTH(approval_token) >= 16",
+        "options": {}
+      },
+      "id": "07a94548-27ab-4b6f-b03a-8c638325acce",
+      "name": "Load After",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        640,
+        -32
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst MODE = 'decision';\n// Shared by \"Render Page\" (MODE='page') and \"Decision Result\" (MODE='decision'). MODE is prepended by the builder.\nconst b = $input.first().json || {};\nconst esc = s => String(s == null ? '' : s).replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst inr = n => 'Rs ' + Number(n || 0).toLocaleString('en-IN');\nconst valid = !!(b.booking_code && b.token);\n\nfunction page(title, inner) {\n  return '<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>' + esc(title) + '</title>' +\n'<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f3f5f8;margin:0;padding:16px;color:#1b2430}' +\n'.card{max-width:460px;margin:20px auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 2px 12px rgba(0,0,0,.08)}' +\n'h2{margin:0 0 4px;font-size:20px}.sub{color:#6b7683;font-size:13px;margin-bottom:12px}' +\n'.badge{display:inline-block;padding:4px 10px;border-radius:99px;font-size:13px;font-weight:600;margin:4px 0 8px}' +\n'.p{background:#fff3d6;color:#8a5a00}.c{background:#dff5e7;color:#14703a}.r{background:#fde2e2;color:#a12626}.g{background:#e8ebef;color:#4a5560}' +\n'table{width:100%;border-collapse:collapse;margin:8px 0 16px}td{padding:8px 0;border-bottom:1px solid #eef0f3;font-size:15px;vertical-align:top}td:first-child{color:#6b7683;width:34%}' +\n'small{color:#6b7683}textarea{width:100%;box-sizing:border-box;border:1px solid #cfd5dc;border-radius:8px;padding:9px;font:inherit;margin-bottom:12px}' +\n'button{width:100%;border:0;border-radius:10px;padding:14px;font-size:16px;font-weight:600;color:#fff;margin-bottom:10px;cursor:pointer}.ok{background:#1e8e4e}.no{background:#c93a3a}' +\n'</style></head><body><div class=\"card\">' + inner + '</div></body></html>';\n}\n\nconst STATUS = {\n  PENDING: ['p', 'Waiting for approval'],\n  CONFIRMED: ['c', 'Confirmed'],\n  REJECTED: ['r', 'Rejected'],\n  EXPIRED: ['g', 'Expired'],\n  CANCELLED: ['g', 'Cancelled by guest']\n};\n\nfunction details(x) {\n  return '<table>' +\n    '<tr><td>Guest</td><td><b>' + esc(x.guest_name) + '</b><br><small>+' + esc(x.phone) + '</small></td></tr>' +\n    '<tr><td>ID proof</td><td>' + esc(x.id_proof) + '</td></tr>' +\n    '<tr><td>Rooms</td><td>' + esc(x.room_details) + '<br><small>Total rooms: ' + esc(x.rooms_count) + '</small></td></tr>' +\n    '<tr><td>Check-in</td><td>' + esc(x.ci) + '</td></tr>' +\n    '<tr><td>Check-out</td><td>' + esc(x.co) + ', 11:00 AM<br><small>' + esc(x.days) + ' day(s)</small></td></tr>' +\n    '<tr><td>Guests</td><td>' + esc(x.guests) + '</td></tr>' +\n    '<tr><td>Total</td><td><b>' + esc(inr(x.total)) + '</b><br><small>pay at hotel</small></td></tr>' +\n    '<tr><td>Requested</td><td>' + esc(x.requested_at) + '</td></tr></table>';\n}\n\nfunction head(x) {\n  const s = STATUS[x.status] || ['g', x.status];\n  return '<h2>Booking #' + esc(x.booking_code) + '</h2><span class=\"badge ' + s[0] + '\">' + esc(s[1]) + '</span>';\n}\n\nconst invalid = page('Invalid link', '<h2>Invalid link</h2><div class=\"sub\">This approval link is not valid.</div>');\n\nif (MODE === 'page') {\n  if (!valid) return [{ json: { html: invalid } }];\n  let inner = head(b) + details(b);\n\n  if (b.status === 'PENDING') {\n    inner += '<div class=\"sub\">Auto-expires in ' + esc(b.mins_left) + ' min. Rooms are held until then.</div>' +\n      '<form method=\"GET\" action=\"' + esc(b.public_url) + '/webhook/hotel-decide\">' +\n      '<input type=\"hidden\" name=\"code\" value=\"' + esc(b.booking_code) + '\"><input type=\"hidden\" name=\"t\" value=\"' + esc(b.token) + '\">' +\n      '<textarea name=\"reason\" rows=\"2\" placeholder=\"Reject reason (optional, sent to guest)\"></textarea>' +\n      '<button class=\"ok\" type=\"submit\" name=\"decision\" value=\"approve\">✅ Approve booking</button>' +\n      '<button class=\"no\" type=\"submit\" name=\"decision\" value=\"reject\">❌ Reject</button></form>';\n  } else {\n    inner += '<div class=\"sub\">No action needed.' + (b.reject_reason ? ' Reason: ' + esc(b.reject_reason) : '') + '</div>';\n  }\n\n  return [{ json: { html: page('Booking ' + b.booking_code, inner) } }];\n}\n\n// MODE === 'decision'\n\nfunction buildMsg(b) {\n  const lang = String(b.guest_language || 'english').trim().toLowerCase();\n  const total = inr(b.total);\n  const why = b.reject_reason ? b.reject_reason : '';\n  const T = {\n    CONFIRMED: {\n      hindi: '✅ आपकी बुकिंग CONFIRMED हो गई है!\\nबुकिंग कोड: ' + b.booking_code + '\\nकमरे: ' + b.room_details + '\\nचेक-इन: ' + b.ci + '\\nचेक-आउट: ' + b.co + ', सुबह 11:00 बजे\\nकुल राशि: ' + total + ' (भुगतान होटल में करें)\\nकृपया अपना ओरिजिनल फोटो ID साथ लाएं।',\n      hinglish: '✅ Aapki booking CONFIRMED ho gayi hai!\\nBooking code: ' + b.booking_code + '\\nRooms: ' + b.room_details + '\\nCheck-in: ' + b.ci + '\\nCheck-out: ' + b.co + ', 11:00 AM\\nTotal: ' + total + ' (payment hotel par karein)\\nPlease apna original photo ID saath laayein.',\n      english: '✅ Your booking is CONFIRMED!\\nBooking code: ' + b.booking_code + '\\nRooms: ' + b.room_details + '\\nCheck-in: ' + b.ci + '\\nCheck-out: ' + b.co + ', 11:00 AM\\nTotal: ' + total + ' (pay at hotel)\\nPlease carry your original photo ID.'\n    },\n    REJECTED: {\n      hindi: 'हमें खेद है, आपकी बुकिंग रिक्वेस्ट ' + b.booking_code + ' स्वीकार नहीं हो सकी।' + (why ? ' कारण: ' + why + '.' : '') + ' दूसरी तारीख या कमरे के विकल्प के लिए हमें मैसेज करें।',\n      hinglish: 'Sorry, aapki booking request ' + b.booking_code + ' approve nahi ho saki.' + (why ? ' Reason: ' + why + '.' : '') + ' Dusri dates ya room type ke liye humein message karein.',\n      english: 'Sorry, your booking request ' + b.booking_code + ' could not be approved.' + (why ? ' Reason: ' + why + '.' : '') + ' Please message us to try other dates or room types.'\n    },\n    EXPIRED: {\n      hindi: 'क्षमा करें, आपकी बुकिंग रिक्वेस्ट ' + b.booking_code + ' समय पर approve नहीं हो पाई, इसलिए कमरे छोड़ दिए गए हैं। दोबारा कोशिश करने के लिए हमें मैसेज करें।',\n      hinglish: 'Sorry, aapki booking request ' + b.booking_code + ' time par approve nahi ho payi, isliye rooms release kar diye gaye. Dobara try karne ke liye humein message karein.',\n      english: 'Sorry, your booking request ' + b.booking_code + ' was not approved in time, so the rooms were released. Please message us again to try once more.'\n    }\n  };\n  const t = T[b.status]; if (!t) return '';\n  return t[lang] || t.english;\n}\n\nif (!valid) return [{ json: { html: invalid, notify: false } }];\nconst final = b.status === 'CONFIRMED' || b.status === 'REJECTED';\nconst justNow = Number(b.decided_ago) <= 20;\nconst notify = final && Number(b.guest_notified) === 0;\nlet banner;\nif (final && justNow) banner = '<div class=\"sub\"><b>' + (b.status === 'CONFIRMED' ? '✅ Approved.' : '❌ Rejected.') + '</b> The guest is being notified on WhatsApp.</div>';\nelse if (b.status === 'EXPIRED') banner = '<div class=\"sub\"><b>⏰ Expired.</b> The hold time is over and the rooms were released, so it can not be approved now.</div>';\nelse banner = '<div class=\"sub\"><b>Already handled.</b> No change was made.' + (notify ? ' The guest message is being sent again.' : '') + '</div>';\nconst html = page('Booking ' + b.booking_code, head(b) + banner + details(b));\nreturn [{ json: { html, notify, phone: b.phone, msg: notify ? buildMsg(b) : '', booking_code: b.booking_code } }];\n"
+      },
+      "id": "54b02d09-6a7a-4fc9-a5fc-d3994d86937e",
+      "name": "Decision Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -32
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "65c46d93-a35a-427d-a636-c6f7139e488b",
+      "name": "Respond Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dd7def33-8a11-44e2-9605-e771808dd1b3",
+              "leftValue": "={{ String($json.notify) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7c7b6675-fd4f-4278-9cb5-73c85b7aee45",
+      "name": "Notify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $json.phone }}",
+        "textBody": "={{ $json.msg }}",
+        "additionalFields": {}
+      },
+      "id": "e12c33c7-b65c-463f-89db-2aaffb89bb5b",
+      "name": "Notify Guest",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        32
+      ],
+      "webhookId": "4de25a80-2dcc-4273-a87d-05c2ac803014",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "model": "codestral-2508",
+        "options": {
+          "maxRetries": 5,
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        -1600
+      ],
+      "id": "d56a16f0-0d37-4587-a342-b5fe94c7a7fb",
+      "name": "Mistral Cloud Chat Model",
+      "notesInFlow": false,
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE hb_bookings SET guest_notified = 1 WHERE booking_code = '{{ String($('Decision Result').first().json.booking_code).replace(/[^A-Za-z0-9]/g,'') }}' AND guest_notified = 0",
+        "options": {}
+      },
+      "id": "10f1fe80-21fc-4bff-8229-3168742ab70a",
+      "name": "Mark Guest Notified",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1904,
+        -16
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_code, guest_name, phone, guest_language, room_details,\n  DATE_FORMAT(check_in, '%a, %d %b %Y') AS ci, DATE_FORMAT(check_out, '%a, %d %b %Y') AS co,\n  total_amount AS total, raw_status AS status, reject_reason\nFROM hb_booking_summary\nWHERE raw_status IN ('CONFIRMED','REJECTED','EXPIRED') AND guest_notified = 0 AND notify_attempts < 5\n  AND decided_at IS NOT NULL AND decided_at <= NOW() - INTERVAL 90 SECOND\nORDER BY decided_at\nLIMIT 10",
+        "options": {}
+      },
+      "id": "e16b7044-1a72-49f2-a3fc-e9a25ad2c7ff",
+      "name": "Get Unnotified",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        880,
+        -544
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inr = n => 'Rs ' + Number(n || 0).toLocaleString('en-IN');\n\nfunction buildMsg(b) {\n  const lang = String(b.guest_language || 'english').trim().toLowerCase();\n  const total = inr(b.total);\n  const why = b.reject_reason ? b.reject_reason : '';\n  const T = {\n    CONFIRMED: {\n      hindi: '✅ आपकी बुकिंग CONFIRMED हो गई है!\\nबुकिंग कोड: ' + b.booking_code + '\\nकमरे: ' + b.room_details + '\\nचेक-इन: ' + b.ci + '\\nचेक-आउट: ' + b.co + ', सुबह 11:00 बजे\\nकुल राशि: ' + total + ' (भुगतान होटल में करें)\\nकृपया अपना ओरिजिनल फोटो ID साथ लाएं।',\n      hinglish: '✅ Aapki booking CONFIRMED ho gayi hai!\\nBooking code: ' + b.booking_code + '\\nRooms: ' + b.room_details + '\\nCheck-in: ' + b.ci + '\\nCheck-out: ' + b.co + ', 11:00 AM\\nTotal: ' + total + ' (payment hotel par karein)\\nPlease apna original photo ID saath laayein.',\n      english: '✅ Your booking is CONFIRMED!\\nBooking code: ' + b.booking_code + '\\nRooms: ' + b.room_details + '\\nCheck-in: ' + b.ci + '\\nCheck-out: ' + b.co + ', 11:00 AM\\nTotal: ' + total + ' (pay at hotel)\\nPlease carry your original photo ID.'\n    },\n    REJECTED: {\n      hindi: 'हमें खेद है, आपकी बुकिंग रिक्वेस्ट ' + b.booking_code + ' स्वीकार नहीं हो सकी।' + (why ? ' कारण: ' + why + '.' : '') + ' दूसरी तारीख या कमरे के विकल्प के लिए हमें मैसेज करें।',\n      hinglish: 'Sorry, aapki booking request ' + b.booking_code + ' approve nahi ho saki.' + (why ? ' Reason: ' + why + '.' : '') + ' Dusri dates ya room type ke liye humein message karein.',\n      english: 'Sorry, your booking request ' + b.booking_code + ' could not be approved.' + (why ? ' Reason: ' + why + '.' : '') + ' Please message us to try other dates or room types.'\n    },\n    EXPIRED: {\n      hindi: 'क्षमा करें, आपकी बुकिंग रिक्वेस्ट ' + b.booking_code + ' समय पर approve नहीं हो पाई, इसलिए कमरे छोड़ दिए गए हैं। दोबारा कोशिश करने के लिए हमें मैसेज करें।',\n      hinglish: 'Sorry, aapki booking request ' + b.booking_code + ' time par approve nahi ho payi, isliye rooms release kar diye gaye. Dobara try karne ke liye humein message karein.',\n      english: 'Sorry, your booking request ' + b.booking_code + ' was not approved in time, so the rooms were released. Please message us again to try once more.'\n    }\n  };\n  const t = T[b.status]; if (!t) return '';\n  return t[lang] || t.english;\n}\n\nreturn $input.all().map(i => {\n  const b = i.json;\n  return { json: { booking_code: String(b.booking_code).replace(/[^A-Za-z0-9]/g, ''), phone: String(b.phone).replace(/\\D/g, ''), msg: buildMsg(b) } };\n}).filter(x => x.json.msg);\n"
+      },
+      "id": "9a5660f3-b3ef-4a64-b329-6cde30972162",
+      "name": "Build Sweep Msg",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE hb_bookings SET notify_attempts = notify_attempts + 1 WHERE booking_code = '{{ $json.booking_code }}';\nSELECT 1 AS ok;",
+        "options": {}
+      },
+      "id": "9591dbcd-a49b-4a14-9aad-70fc1f217a01",
+      "name": "Bump Attempt",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1344,
+        -544
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Build Sweep Msg').item.json.phone }}",
+        "textBody": "={{ $('Build Sweep Msg').item.json.msg }}",
+        "additionalFields": {}
+      },
+      "id": "f6f95f63-2d20-4d69-b19e-c212dfbecc12",
+      "name": "Send Sweep Msg",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        -544
+      ],
+      "webhookId": "03b235d1-68c3-48fb-a9e8-2eaad085fb1c",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE hb_bookings SET guest_notified = 1 WHERE booking_code = '{{ $('Build Sweep Msg').item.json.booking_code }}' AND guest_notified = 0",
+        "options": {}
+      },
+      "id": "d677ce5f-0331-4f03-8b66-13661ad9b32b",
+      "name": "Mark Swept Notified",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1792,
+        -544
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT booking_code, status, GREATEST(TIMESTAMPDIFF(MINUTE, NOW(), hold_expires_at), 0) AS mins_left, reject_reason\nFROM hb_booking_summary\nWHERE phone = '{{ String($('Clean Message').first().json.from).replace(/\\D/g,'') }}'\nORDER BY booking_id DESC\nLIMIT 5",
+        "options": {}
+      },
+      "id": "4e6773dc-2be1-45c4-b1ab-3391c60c2477",
+      "name": "Latest Bookings",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        2112,
+        -1760
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const __r = (() => {\nconst out = String($('Hotel AI Agent').first().json.output ?? '').trim();\nconst lang = $('Clean Message').first().json.lang || 'eng';\nconst rows = $input.all().map(i => i.json).filter(r => r && r.booking_code);\n\n// Does the reply CLAIM a booking is confirmed?\nconst CLAIM = /confirmed|confirm\\s+ho\\s+(gayi|gaya|chuki|chuka|gai)|confirm\\s+hai|कन्फर्म|कंफर्म|पक्की\\s+हो/i;\nconst NEG = /\\b(not|isn't|isnt|n't|yet|pending|nahi|nahin|nhi|abhi tak|once|after|until|will be|will get|jab|baad|if)\\b|नहीं|अभी तक|जब|बाद/i;\nif (!out || !CLAIM.test(out) || NEG.test(out)) return [{ json: { output: out, guarded: false } }];\n\nconst codes = out.match(/HB[0-9A-F]{6}/g) || [];\nlet bad = null;\nif (codes.length) {\n  const known = rows.filter(r => codes.includes(r.booking_code));\n  bad = known.find(r => r.status !== 'CONFIRMED') || (known.length ? null : (rows[0] || { booking_code: codes[0], status: 'NONE' }));\n} else {\n  bad = rows.length ? (rows[0].status !== 'CONFIRMED' ? rows[0] : null) : { booking_code: '', status: 'NONE' };\n}\nif (!bad) return [{ json: { output: out, guarded: false } }];   // the claim is true\n\nconst c = bad.booking_code, m = Number(bad.mins_left) || 0;\nconst T = {\n  PENDING: {\n    eng: `Your booking request ${c} is not confirmed yet. It is waiting for the receptionist's approval (about ${m} min left for approval). I will message you here as soon as it is decided.`,\n    hin: `Aapki booking request ${c} abhi confirm nahi hui hai. Receptionist ke approval ka wait hai (approval ke liye lagbhag ${m} minute bache hain). Decision hote hi main yahin aapko message karunga.`,\n    dev: `आपकी बुकिंग रिक्वेस्ट ${c} अभी कन्फर्म नहीं हुई है। रिसेप्शनिस्ट के अप्रूवल का इंतज़ार है (लगभग ${m} मिनट बचे हैं)। फैसला होते ही मैं यहीं आपको मैसेज करूँगा।`\n  },\n  EXPIRED: {\n    eng: `Your booking request ${c} was not approved in time, so it is NOT confirmed and the rooms were released. Please tell me if you would like to send the request again.`,\n    hin: `Aapki booking request ${c} time par approve nahi hui, isliye wo confirm NAHI hai aur rooms release ho gaye. Dobara request bhejni ho to bataiye.`,\n    dev: `आपकी बुकिंग रिक्वेस्ट ${c} समय पर अप्रूव नहीं हुई, इसलिए वह कन्फर्म नहीं है और कमरे छोड़ दिए गए हैं। दोबारा रिक्वेस्ट भेजनी हो तो बताइए।`\n  },\n  REJECTED: {\n    eng: `Your booking request ${c} was not approved, so it is not confirmed.${bad.reject_reason ? ' Reason: ' + bad.reject_reason + '.' : ''} I can help you with other dates or room types.`,\n    hin: `Aapki booking request ${c} approve nahi hui, isliye confirm nahi hai.${bad.reject_reason ? ' Reason: ' + bad.reject_reason + '.' : ''} Dusri dates ya room type ke liye main help kar sakta hu.`,\n    dev: `आपकी बुकिंग रिक्वेस्ट ${c} अप्रूव नहीं हुई, इसलिए कन्फर्म नहीं है। दूसरी तारीख या कमरे के लिए मैं मदद कर सकता हूँ।`\n  },\n  CANCELLED: {\n    eng: `Booking ${c} was cancelled, so it is not confirmed. I can help you make a new booking if you like.`,\n    hin: `Booking ${c} cancel ho chuki hai, isliye confirm nahi hai. Nayi booking karni ho to main help kar sakta hu.`,\n    dev: `बुकिंग ${c} रद्द हो चुकी है, इसलिए कन्फर्म नहीं है। नई बुकिंग करनी हो तो मैं मदद कर सकता हूँ।`\n  },\n  NONE: {\n    eng: `I could not find a booking for your number, so nothing is confirmed. Would you like to make a booking?`,\n    hin: `Mujhe aapke number par koi booking nahi mili, isliye kuch confirm nahi hai. Kya aap booking karna chahenge?`,\n    dev: `मुझे आपके नंबर पर कोई बुकिंग नहीं मिली, इसलिए कुछ कन्फर्म नहीं है। क्या आप बुकिंग करना चाहेंगे?`\n  }\n};\nconst set = T[bad.status] || T.NONE;\nreturn [{ json: { output: set[lang] || set.eng, guarded: true, original: out } }];\n\n})();\nlet __s = ''; try { __s = $('Brain').first().json.suffix || ''; } catch (e) {}\nif (__s && __r[0] && __r[0].json) __r[0].json.output = String(__r[0].json.output || '') + __s;\nreturn __r;"
+      },
+      "id": "90ca83fe-d281-4f61-b5f6-b0224153ee68",
+      "name": "Reply Guard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        -1760
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT cfg_value FROM hb_config WHERE cfg_key='hotel_name') AS hotel_name,\n (SELECT cfg_value FROM hb_config WHERE cfg_key='checkout_time') AS checkout_time,\n (SELECT cfg_value FROM hb_config WHERE cfg_key='receptionist_phone') AS rec_phone,\n (SELECT rate_per_night FROM hb_room_types WHERE code='AC') AS ac_rate,\n (SELECT rate_per_night FROM hb_room_types WHERE code='NonAC') AS nonac_rate,\n (SELECT MAX(max_guests) FROM hb_room_types) AS max_guests,\n (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', x.booking_id, 'code', x.booking_code, 'status', x.status, 'rooms', x.room_details, 'ci', DATE_FORMAT(x.check_in,'%d %b'), 'co', DATE_FORMAT(x.check_out,'%d %b'), 'total', x.total_amount, 'mins', GREATEST(TIMESTAMPDIFF(MINUTE, NOW(), x.hold_expires_at), 0), 'cancel', IF(x.created_at > NOW() - INTERVAL 6 HOUR AND x.status IN ('PENDING','CONFIRMED'), 1, 0), 'reason', x.reject_reason))\n  FROM (SELECT * FROM hb_booking_summary WHERE phone = '{{ String($('Clean Message').first().json.from).replace(/\\D/g,'') }}' ORDER BY booking_id DESC LIMIT 3) x) AS bookings_json",
+        "options": {}
+      },
+      "id": "99d5f61f-5642-45ee-be03-d900d16643a1",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1216,
+        -1552
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== shared helpers (pasted into both Code nodes by the builder) =====\nconst todayIST = () => { const d = new Date(Date.now() + 5.5 * 3600e3); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); };\nconst iso = d => d.toISOString().slice(0, 10);\nconst addDays = (d, n) => new Date(d.getTime() + n * 86400e3);\nconst MONTHS = { jan:0, january:0, feb:1, february:1, mar:2, march:2, apr:3, april:3, may:4, jun:5, june:5, jul:6, july:6, aug:7, august:7, sep:8, sept:8, september:8, oct:9, october:9, nov:10, november:10, dec:11, december:11 };\nconst NUMW = { ek:1, one:1, do:2, two:2, teen:3, three:3, char:4, chaar:4, four:4, paanch:5, panch:5, five:5, chhe:6, six:6, saat:7, seven:7, aath:8, eight:8, nau:9, nine:9, das:10, ten:10 };\nconst mkDate = (dd, mm, yy, today) => {\n  let y = yy ? (yy < 100 ? 2000 + yy : yy) : today.getUTCFullYear();\n  let d = new Date(Date.UTC(y, mm, dd));\n  if (d.getUTCMonth() !== mm || d.getUTCDate() !== dd) return null;      // 31 Feb etc.\n  if (!yy && d < today) d = new Date(Date.UTC(y + 1, mm, dd));\n  return d;\n};\n// returns { dates: [Date...], nights: n|null, rest: text without the matched date parts }\nconst deva = s => String(s).toLowerCase()\n  .replace(/नॉन[\\s-]*एसी|नान[\\s-]*एसी/g, ' non ac ').replace(/एसी/g, ' ac ')\n  .replace(/कमरों|कमरे|कमरा/g, ' rooms ').replace(/रातों|रातें|रात/g, ' nights ').replace(/दिन/g, ' days ')\n  .replace(/परसों/g, ' parso ').replace(/कल/g, ' kal ').replace(/आज/g, ' aaj ')\n  .replace(/मेहमान|लोग|व्यक्ति|सदस्य/g, ' guests ')\n  .replace(/एक/g, ' 1 ').replace(/दो/g, ' 2 ').replace(/तीन/g, ' 3 ').replace(/चार/g, ' 4 ').replace(/पाँच|पांच/g, ' 5 ').replace(/छह|छः/g, ' 6 ').replace(/सात/g, ' 7 ').replace(/आठ/g, ' 8 ').replace(/नौ/g, ' 9 ').replace(/दस/g, ' 10 ')\n  .replace(/जनवरी/g, ' jan ').replace(/फरवरी/g, ' feb ').replace(/मार्च/g, ' mar ').replace(/अप्रैल/g, ' apr ').replace(/मई/g, ' may ').replace(/जून/g, ' jun ').replace(/जुलाई/g, ' jul ').replace(/अगस्त/g, ' aug ').replace(/सितंबर|सितम्बर/g, ' sep ').replace(/अक्टूबर|अक्तूबर/g, ' oct ').replace(/नवंबर|नवम्बर/g, ' nov ').replace(/दिसंबर|दिसम्बर/g, ' dec ')\n  .replace(/से/g, ' se ').replace(/तक/g, ' tak ');\nfunction parseDates(raw, today) {\n  let t = ' ' + deva(raw) + ' ';\n  const found = [];     // {pos, date}\n  const take = (re, fn) => { t = t.replace(re, (...a) => { const pos = a[a.length - 2]; const r = fn(...a); if (r) { found.push({ pos, date: r }); return ' '.repeat(a[0].length); } return a[0]; }); };\n  take(/\\b(\\d{4})-(\\d{1,2})-(\\d{1,2})\\b/g, (m, y, mo, d) => mkDate(+d, +mo - 1, +y, today));\n  // \"12 se 15 nov\", \"12 to 15 nov\", \"12-15 nov\"\n  t = t.replace(/\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|se|-|till|tak|until|–)\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+([a-z]{3,9})\\b(?:,?\\s*(\\d{4}))?/g, (m, d1, d2, mon, y, pos) => {\n    const mm = MONTHS[mon]; if (mm === undefined) return m;\n    const a = mkDate(+d1, mm, y ? +y : 0, today), b = mkDate(+d2, mm, y ? +y : 0, today); if (!a || !b) return m;\n    found.push({ pos, date: a }); found.push({ pos: pos + 1, date: b }); return ' '.repeat(m.length);\n  });\n  take(/\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:of\\s+)?([a-z]{3,9})\\b(?:,?\\s*(\\d{4}))?/g, (m, d, mon, y) => MONTHS[mon] === undefined ? null : mkDate(+d, MONTHS[mon], y ? +y : 0, today));\n  take(/\\b([a-z]{3,9})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s*(\\d{4}))?/g, (m, mon, d, y) => MONTHS[mon] === undefined ? null : mkDate(+d, MONTHS[mon], y ? +y : 0, today));\n  take(/\\b(\\d{1,2})[\\/.\\-](\\d{1,2})(?:[\\/.\\-](\\d{2,4}))?\\b/g, (m, d, mo, y) => (+mo >= 1 && +mo <= 12) ? mkDate(+d, +mo - 1, y ? +y : 0, today) : null);\n  take(/\\bday after tomorrow\\b|\\bparso\\b|\\bparsu\\b/g, () => addDays(today, 2));\n  take(/\\btomorrow\\b|\\btmrw\\b|\\btomorow\\b|\\bkal\\b/g, () => addDays(today, 1));\n  take(/\\btoday\\b|\\baaj\\b|\\bab\\b(?=\\s*(se|ko))/g, () => today);\n  found.sort((a, b) => a.pos - b.pos);\n  let nights = null;\n  const nm = t.match(/(\\d+|ek|do|teen|char|one|two|three|four|five)\\s*(?:night|nights|raat|raaton|din|days?)\\b/);\n  if (nm) { nights = NUMW[nm[1]] || +nm[1]; t = t.replace(nm[0], ' '.repeat(nm[0].length)); }\n  return { dates: found.map(f => f.date), nights, rest: t };\n}\nfunction parseRooms(rest) {\n  let t = ' ' + rest.toLowerCase().replace(/non[\\s\\-_.]*a\\.?\\s*\\/?\\s*c\\b\\.?/g, ' NONAC ').replace(/\\ba\\s*\\/\\s*c\\b|\\bac\\b/g, ' AC ').replace(/\\bnon\\s*ac\\b/g, ' NONAC ') + ' ';\n  const num = s => NUMW[s] || +s;\n  let ac = 0, nac = 0, any = false, pendType = null, pendCount = null;\n  const NUM = '(\\\\d{1,2}|ek|one|do|two|teen|three|char|chaar|four|paanch|five|six|seven|eight|nine|ten)';\n  let m;\n  const re1 = new RegExp(NUM + '\\\\s*(?:x|\\\\*)?\\\\s*(?:rooms?\\\\s*)?(NONAC|AC)\\\\b', 'g');\n  while ((m = re1.exec(t))) { any = true; if (m[2] === 'AC') ac += num(m[1]); else nac += num(m[1]); }\n  t = t.replace(re1, ' ');\n  const re2 = new RegExp('(NONAC|AC)\\\\s*(?:rooms?|kamre|kamra)?\\\\s*[:x*\\\\-]?\\\\s*' + NUM + '\\\\b(?!\\\\s*(?:guests?|people|persons?|members?|log|pax|jane))', 'g');\n  while ((m = re2.exec(t))) { any = true; if (m[1] === 'AC') ac += num(m[2]); else nac += num(m[2]); }\n  t = t.replace(re2, ' ');\n  if (!any) {\n    const hasAC = /\\bAC\\b/.test(t), hasN = /\\bNONAC\\b/.test(t);\n    const cnt = t.match(new RegExp(NUM + '\\\\s*(?:rooms?|kamre|kamra|kamron)\\\\b'));\n    if (cnt) pendCount = num(cnt[1]);\n    if (hasAC && !hasN) pendType = 'AC'; else if (hasN && !hasAC) pendType = 'NONAC';\n    if (pendType && pendCount) { if (pendType === 'AC') ac = pendCount; else nac = pendCount; any = true; pendType = null; pendCount = null; }\n  }\n  return { ac, nac, any, pendType, pendCount };\n}\nfunction parseGuests(rest) {\n  const t = ' ' + rest.toLowerCase() + ' ';\n  const NUM = '(\\\\d{1,2}|ek|one|do|two|teen|three|char|chaar|four|paanch|five|six|seven|eight|nine|ten)';\n  let m = t.match(new RegExp(NUM + '\\\\s*(?:guests?|people|persons?|members?|pax|log|logon|jane|aadmi|adults?|bande|vyakti|bachhe|kids?|children)\\\\b'));\n  if (m) return NUMW[m[1]] || +m[1];\n  m = t.match(new RegExp('\\\\b(?:for|total|guests?|members?)\\\\s*[:\\\\-]?\\\\s*' + NUM + '\\\\b'));\n  if (m) return NUMW[m[1]] || +m[1];\n  return null;\n}\n// ----- ID validation (same rules as the database; the database re-checks) -----\nconst VD = [[0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],[3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],[5,9,8,7,6,0,4,3,2,1],[6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],[9,8,7,6,5,4,3,2,1,0]];\nconst VP = [[0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],[8,9,1,6,0,4,3,5,2,7],[9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],[2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8]];\nconst verhoeff = s => { let c = 0; const a = s.split('').reverse(); for (let i = 0; i < a.length; i++) c = VD[c][VP[i % 8][+a[i]]]; return c === 0; };\nconst ID_TYPES = { AADHAAR: 'Aadhaar', PASSPORT: 'Passport', DRIVING_LICENSE: 'Driving Licence', VOTER_ID: 'Voter ID' };\nfunction idTypeOf(t) {\n  if (/आधार/.test(t)) return 'AADHAAR'; if (/पासपोर्ट/.test(t)) return 'PASSPORT'; if (/लाइसेंस|लाइसेन्स/.test(t)) return 'DRIVING_LICENSE'; if (/वोटर/.test(t)) return 'VOTER_ID';\n  t = t.toLowerCase().replace(/[^a-z ]/g, ' ');\n  if (/\\b(aadh?a+r|adhar|adhaar|uid)\\b/.test(t)) return 'AADHAAR';\n  if (/\\bpass\\s*port\\b|\\bpassport\\b/.test(t)) return 'PASSPORT';\n  if (/\\bdriving\\b|\\blicen[cs]e\\b|\\bdl\\b/.test(t)) return 'DRIVING_LICENSE';\n  if (/\\bvoter\\b|\\bepic\\b/.test(t)) return 'VOTER_ID';\n  return null;\n}\nfunction idCheck(type, num) {\n  const n = String(num || '').toUpperCase().replace(/[ -]/g, '');\n  if (type === 'AADHAAR') { if (!/^[0-9]{12}$/.test(n)) return 'AADHAAR_MUST_BE_12_DIGITS'; if (!/^[2-9]/.test(n) || !verhoeff(n)) return 'AADHAAR_NUMBER_INVALID'; }\n  else if (type === 'PASSPORT') { if (!/^[A-PR-WY][0-9]{7}$/.test(n)) return 'PASSPORT_FORMAT_INVALID'; }\n  else if (type === 'DRIVING_LICENSE') { if (!/^[A-Z]{2}[0-9]{13}$/.test(n)) return 'DRIVING_LICENSE_FORMAT_INVALID'; }\n  else if (type === 'VOTER_ID') { if (!/^[A-Z]{3}[0-9]{7}$/.test(n)) return 'VOTER_ID_FORMAT_INVALID'; }\n  else return 'UNKNOWN_ID_TYPE';\n  return 'OK';\n}\nfunction idNumberOf(t) {\n  const m = t.match(/\\b\\d[\\d\\s-]{9,15}\\d\\b/);            // 12 digits, maybe spaced or hyphenated\n  if (m && m[0].replace(/\\D/g, '').length === 12) return m[0].replace(/\\D/g, '');\n  const w = t.toUpperCase().split(/\\s+/).map(x => x.replace(/[^A-Z0-9]/g, '')).filter(x => x.length >= 6 && x.length <= 16 && /\\d/.test(x));\n  return w.length ? w[0] : null;\n}\nconst yes = t => /^(y|yes|yeah|yep|yup|yea|ya|ok|okay|okk|k|haan|han|ha|haa|ji|hanji|sure|confirm|confirmed|correct|sahi|theek hai|thik hai|theek|thik|kar do|karo|krdo|done|book kar do|book|हाँ|हां|जी|ठीक है|सही)(?=$|[\\s,.!?])/i.test(t.trim());\nconst no = t => /^(n|no|nope|nahi|nahin|nhi|na|cancel|stop|mat|wrong|galat|नहीं|नही|ना)(?=$|[\\s,.!?])/i.test(t.trim());\nconst inr = n => 'Rs ' + Number(n || 0).toLocaleString('en-IN');\nconst dshow = s => { const d = new Date(s + 'T00:00:00Z'); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }); };\n\n// ===== guest-facing texts (English / Hinglish / Hindi) =====\nconst mk = (L, c) => {\n  const T = (e, h, d) => ({ eng: e, hin: h, dev: d })[L] || e;\n  const P = n => inr(n);\n  return {\n    welcome: () => T(\n`Welcome to ${c.hotel}! 🏨\nHow can I help you today?\n\n1️⃣ Book a room\n2️⃣ Room rates & info\n3️⃣ My booking status\n4️⃣ Cancel a booking\n5️⃣ Talk to the receptionist\n\nReply with a number, or just type your question.`,\n`${c.hotel} mein aapka swagat hai! 🏨\nMain aapki kya madad kar sakta hu?\n\n1️⃣ Room book karna\n2️⃣ Room rates aur info\n3️⃣ Meri booking ka status\n4️⃣ Booking cancel karna\n5️⃣ Receptionist se baat\n\nEk number bhejiye ya seedha apna sawal likhiye.`,\n`${c.hotel} में आपका स्वागत है! 🏨\nमैं आपकी क्या मदद कर सकता हूँ?\n\n1️⃣ कमरा बुक करना\n2️⃣ कमरों के रेट और जानकारी\n3️⃣ मेरी बुकिंग का स्टेटस\n4️⃣ बुकिंग कैंसिल करना\n5️⃣ रिसेप्शनिस्ट से बात\n\nकोई नंबर भेजिए या सीधे अपना सवाल लिखिए।`),\n    rates: () => T(\n`Our rooms 🏨\n• AC room: ${P(c.ac)} per night\n• Non-AC room: ${P(c.nac)} per night\n• Up to ${c.maxg} guests per room\n• Check-out time: ${c.cot}\n• Payment at the hotel (no advance needed)\n• Free cancellation within 6 hours of booking\n\nTo book, type \"book\" or send 1.`,\n`Hamare rooms 🏨\n• AC room: ${P(c.ac)} per night\n• Non-AC room: ${P(c.nac)} per night\n• Ek room mein ${c.maxg} guests tak\n• Check-out time: ${c.cot}\n• Payment hotel par (advance nahi chahiye)\n• Booking ke 6 ghante ke andar cancel kar sakte hain\n\nBook karne ke liye \"book\" likhiye ya 1 bhejiye.`,\n`हमारे कमरे 🏨\n• AC कमरा: ${P(c.ac)} प्रति रात\n• Non-AC कमरा: ${P(c.nac)} प्रति रात\n• एक कमरे में ${c.maxg} मेहमान तक\n• चेक-आउट समय: ${c.cot}\n• भुगतान होटल में (एडवांस नहीं)\n• बुकिंग के 6 घंटे के अंदर कैंसिल कर सकते हैं\n\nबुक करने के लिए \"book\" लिखिए या 1 भेजिए।`),\n    askDates: () => T(\n`Sure! Please tell me your check-in and check-out dates.\nExample: 12 Nov to 14 Nov\n(Check-out time is ${c.cot}.)`,\n`Zaroor! Apni check-in aur check-out dates bataiye.\nExample: 12 Nov se 14 Nov\n(Check-out time ${c.cot} hai.)`,\n`ज़रूर! कृपया चेक-इन और चेक-आउट की तारीख बताइए।\nउदाहरण: 12 Nov से 14 Nov\n(चेक-आउट समय ${c.cot} है।)`),\n    askCheckout: s => T(`Check-in noted: ${dshow(s.ci)}. What is your check-out date?`, `Check-in ${dshow(s.ci)} note kar liya. Check-out date kya hai?`, `चेक-इन ${dshow(s.ci)} नोट कर लिया। चेक-आउट की तारीख क्या है?`),\n    badOrder: () => T(`Check-out must be after check-in. Please send both dates again (example: 12 Nov to 14 Nov).`, `Check-out date check-in ke baad honi chahiye. Dono dates dobara bhejiye (example: 12 Nov se 14 Nov).`, `चेक-आउट की तारीख चेक-इन के बाद होनी चाहिए। कृपया दोनों तारीखें फिर से भेजिए।`),\n    pastDate: () => T(`That date has already passed. Please send future dates (example: 12 Nov to 14 Nov).`, `Ye date nikal chuki hai. Aane wali dates bhejiye (example: 12 Nov se 14 Nov).`, `यह तारीख निकल चुकी है। कृपया आने वाली तारीखें भेजिए।`),\n    askRooms: s => T(\n`${dshow(s.ci)} to ${dshow(s.co)} (${s.nights} night${s.nights > 1 ? 's' : ''}). How many rooms do you need?\nAC ${P(c.ac)} / Non-AC ${P(c.nac)} per night, max ${c.maxg} guests per room.\nExample: 2 AC and 1 Non-AC`,\n`${dshow(s.ci)} se ${dshow(s.co)} (${s.nights} raat). Kitne rooms chahiye?\nAC ${P(c.ac)} / Non-AC ${P(c.nac)} per night, ek room mein max ${c.maxg} guests.\nExample: 2 AC aur 1 Non-AC`,\n`${dshow(s.ci)} से ${dshow(s.co)} (${s.nights} रात)। कितने कमरे चाहिए?\nAC ${P(c.ac)} / Non-AC ${P(c.nac)} प्रति रात, एक कमरे में अधिकतम ${c.maxg} मेहमान।\nउदाहरण: 2 AC और 1 Non-AC`),\n    askRoomType: n => T(`${n} room(s). Do you want AC or Non-AC?`, `${n} room. AC chahiye ya Non-AC?`, `${n} रूम। AC चाहिए या Non-AC?`),\n    askRoomCount: ty => T(`How many ${ty === 'AC' ? 'AC' : 'Non-AC'} rooms do you need?`, `Kitne ${ty === 'AC' ? 'AC' : 'Non-AC'} rooms chahiye?`, `कितने ${ty === 'AC' ? 'AC' : 'Non-AC'} कमरे चाहिए?`),\n    notAvail: q => T(\n`Sorry, we do not have that many rooms free for ${dshow(q.ci)} to ${dshow(q.co)}.\nAvailable: ${q.ac_available} AC and ${q.nonac_available} Non-AC.\nPlease tell me the rooms you would like instead, or send new dates.`,\n`Sorry, ${dshow(q.ci)} se ${dshow(q.co)} ke liye itne rooms free nahi hain.\nAvailable: ${q.ac_available} AC aur ${q.nonac_available} Non-AC.\nAap kitne rooms lena chahenge wo bataiye, ya nayi dates bhejiye.`,\n`क्षमा करें, ${dshow(q.ci)} से ${dshow(q.co)} के लिए इतने कमरे खाली नहीं हैं।\nउपलब्ध: ${q.ac_available} AC और ${q.nonac_available} Non-AC।\nकृपया बताइए कितने कमरे लेंगे, या नई तारीखें भेजिए।`),\n    askGuests: s => T(\n`Good news, rooms are available! 🎉\n${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''} for ${s.nights} night(s): total ${P(s.total)}.\nHow many guests in total? (max ${c.maxg} per room)`,\n`Good news, rooms available hain! 🎉\n${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}, ${s.nights} raat ka total ${P(s.total)}.\nTotal kitne guests honge? (ek room mein max ${c.maxg})`,\n`खुशखबरी, कमरे उपलब्ध हैं! 🎉\n${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}, ${s.nights} रात का कुल ${P(s.total)}।\nकुल कितने मेहमान होंगे? (एक कमरे में अधिकतम ${c.maxg})`),\n    askGuestsOnly: () => T(`How many guests in total? (max ${c.maxg} per room)`, `Total kitne guests honge? (ek room mein max ${c.maxg})`, `कुल कितने मेहमान होंगे? (एक कमरे में अधिकतम ${c.maxg})`),\n    tooMany: (g, r) => T(`${g} guests do not fit in ${r} room(s): maximum ${c.maxg} per room (${c.maxg * r} in total). Please send fewer guests, or tell me how many rooms you want (example: 3 AC).`, `${g} guests ${r} room(s) mein nahi aa sakte: ek room mein max ${c.maxg} (kul ${c.maxg * r}). Kam guests batayiye, ya kitne rooms chahiye wo likhiye (example: 3 AC).`, `${g} मेहमान ${r} कमरे में नहीं आ सकते: एक कमरे में अधिकतम ${c.maxg} (कुल ${c.maxg * r})। कम मेहमान बताइए, या कितने कमरे चाहिए लिखिए।`),\n    fewer: (g, r) => { const sg = Math.max(1, Math.ceil(g / 2)); return T(\n`You asked for ${r} rooms for ${g} guest${g > 1 ? 's' : ''}. Usually at least 2 guests share a room, so ${sg} room${sg > 1 ? 's' : ''} should be enough and will cost less.\nReply YES to keep ${r} rooms, NO to choose the rooms again (example: ${sg} AC), or send a new number of guests.`,\n`Aapne ${r} rooms maange hain aur guests ${g} hain. Aam taur par ek room mein kam se kam 2 log rehte hain, isliye ${sg} room kaafi honge aur sasta padega.\n${r} rooms hi rakhne hain to YES likhiye, rooms dobara chunne ke liye NO (example: ${sg} AC), ya guests ki nayi sankhya bhejiye.`,\n`आपने ${r} कमरे माँगे हैं और मेहमान ${g} हैं। आमतौर पर एक कमरे में कम से कम 2 लोग रहते हैं, इसलिए ${sg} कमरे काफ़ी होंगे और सस्ता पड़ेगा।\n${r} कमरे ही रखने हैं तो YES लिखिए, कमरे दोबारा चुनने के लिए NO (उदाहरण: ${sg} AC), या मेहमानों की नई संख्या भेजिए।`); },\n    askName: () => T(`May I have the guest's full name?`, `Guest ka poora naam bataiye.`, `कृपया मेहमान का पूरा नाम बताइए।`),\n    badName: () => T(`Please send the name using letters only (example: Rahul Sharma).`, `Naam sirf letters mein bhejiye (example: Rahul Sharma).`, `कृपया नाम सिर्फ अक्षरों में भेजिए (उदाहरण: राहुल शर्मा)।`),\n    askId: () => T(`Which photo ID will you show at check-in, and its number?\n(Aadhaar / Passport / Driving Licence / Voter ID)\nExample: Aadhaar 1234 5678 9012`, `Check-in par kaun sa photo ID dikhayenge, aur uska number kya hai?\n(Aadhaar / Passport / Driving Licence / Voter ID)\nExample: Aadhaar 1234 5678 9012`, `चेक-इन पर कौन सा फोटो ID दिखाएंगे, और उसका नंबर क्या है?\n(Aadhaar / Passport / Driving Licence / Voter ID)\nउदाहरण: Aadhaar 1234 5678 9012`),\n    askIdNumber: ty => T(`Please send your ${ID_TYPES[ty]} number.`, `Apna ${ID_TYPES[ty]} number bhejiye.`, `कृपया अपना ${ID_TYPES[ty]} नंबर भेजिए।`),\n    askIdType: () => T(`Which ID is this number from? (Aadhaar / Passport / Driving Licence / Voter ID)`, `Ye number kaun se ID ka hai? (Aadhaar / Passport / Driving Licence / Voter ID)`, `यह नंबर किस ID का है? (Aadhaar / Passport / Driving Licence / Voter ID)`),\n    idBad: code => {\n      const why = {\n        AADHAAR_MUST_BE_12_DIGITS: T('An Aadhaar number has exactly 12 digits.', 'Aadhaar number mein pure 12 digits hote hain.', 'आधार नंबर में ठीक 12 अंक होते हैं।'),\n        AADHAAR_NUMBER_INVALID: T('This Aadhaar number does not look valid. Please check it.', 'Ye Aadhaar number sahi nahi lag raha. Dobara check kijiye.', 'यह आधार नंबर सही नहीं लग रहा। कृपया दोबारा जाँचिए।'),\n        PASSPORT_FORMAT_INVALID: T('A passport number is 1 letter + 7 digits (example: K1234567).', 'Passport number 1 letter + 7 digits hota hai (example: K1234567).', 'पासपोर्ट नंबर 1 अक्षर + 7 अंक का होता है (उदाहरण: K1234567)।'),\n        DRIVING_LICENSE_FORMAT_INVALID: T('A driving licence number looks like DL1420110012345.', 'Driving licence number aisa hota hai: DL1420110012345.', 'ड्राइविंग लाइसेंस नंबर ऐसा होता है: DL1420110012345।'),\n        VOTER_ID_FORMAT_INVALID: T('A Voter ID looks like ABC1234567 (3 letters + 7 digits).', 'Voter ID aisa hota hai: ABC1234567 (3 letters + 7 digits).', 'वोटर ID ऐसा होता है: ABC1234567 (3 अक्षर + 7 अंक)।')\n      }[code] || T('This ID number is not valid.', 'Ye ID number sahi nahi hai.', 'यह ID नंबर सही नहीं है।');\n      return why + '\\n' + T('Please send the ID type and number again.', 'Please ID type aur number dobara bhejiye.', 'कृपया ID का प्रकार और नंबर फिर से भेजिए।');\n    },\n    summary: s => T(\n`Please check your booking:\n👤 ${s.name}\n🛏️ ${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}\n📅 ${dshow(s.ci)} to ${dshow(s.co)} (${s.nights} night${s.nights > 1 ? 's' : ''})\n👥 ${s.guests} guest${s.guests > 1 ? 's' : ''}\n🪪 ${ID_TYPES[s.idt]} ${s.idMasked}\n💰 Total: ${P(s.total)} (pay at hotel)\n\nReply YES to send the booking request, or NO to start again.`,\n`Apni booking check kijiye:\n👤 ${s.name}\n🛏️ ${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}\n📅 ${dshow(s.ci)} se ${dshow(s.co)} (${s.nights} raat)\n👥 ${s.guests} guests\n🪪 ${ID_TYPES[s.idt]} ${s.idMasked}\n💰 Total: ${P(s.total)} (payment hotel par)\n\nBooking request bhejne ke liye YES likhiye, dobara shuru karne ke liye NO.`,\n`कृपया अपनी बुकिंग जाँचिए:\n👤 ${s.name}\n🛏️ ${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}\n📅 ${dshow(s.ci)} से ${dshow(s.co)} (${s.nights} रात)\n👥 ${s.guests} मेहमान\n🪪 ${ID_TYPES[s.idt]} ${s.idMasked}\n💰 कुल: ${P(s.total)} (भुगतान होटल में)\n\nबुकिंग रिक्वेस्ट भेजने के लिए YES लिखिए, दोबारा शुरू करने के लिए NO।`),\n    created: (code, s) => T(\n`Your booking request ${code} is received, but it is NOT confirmed yet. ⏳\n${s.rooms}, ${dshow(s.ci)} to ${dshow(s.co)}, total ${P(s.total)}, pay at hotel.\nThe receptionist will approve it within 30 minutes and I will message you here. Cancellation is possible within 6 hours.`,\n`Aapki booking request ${code} mil gayi hai, par abhi confirm NAHI hui hai. ⏳\n${s.rooms}, ${dshow(s.ci)} se ${dshow(s.co)}, total ${P(s.total)}, payment hotel par.\nReceptionist 30 minute ke andar approve karenge aur main yahin aapko message karunga. 6 ghante ke andar cancel kar sakte hain.`,\n`आपकी बुकिंग रिक्वेस्ट ${code} मिल गई है, पर अभी कन्फर्म नहीं हुई है। ⏳\n${s.rooms}, ${dshow(s.ci)} से ${dshow(s.co)}, कुल ${P(s.total)}, भुगतान होटल में।\nरिसेप्शनिस्ट 30 मिनट में अप्रूव करेंगे और मैं यहीं आपको मैसेज करूँगा। 6 घंटे के अंदर कैंसिल कर सकते हैं।`),\n    breakdown: s => {\n      const n = s.nights, L1 = [];\n      if (s.ac) L1.push(`AC: ${s.ac} x ${P(c.ac)} x ${n} ${T('night', 'raat', 'रात')} = ${P(s.ac * c.ac * n)}`);\n      if (s.nac) L1.push(`Non-AC: ${s.nac} x ${P(c.nac)} x ${n} ${T('night', 'raat', 'रात')} = ${P(s.nac * c.nac * n)}`);\n      return T('How the total is calculated:', 'Total aise bana hai:', 'कुल राशि ऐसे बनी है:') + '\\n' + L1.join('\\n') + '\\n' + T('Total', 'Total', 'कुल') + ': ' + P(s.total) + '\\n\\n' + T('Rate x rooms x nights, no extra charges.', 'Rate x rooms x raat, koi extra charge nahi.', 'रेट x कमरे x रात, कोई अतिरिक्त शुल्क नहीं।');\n    },\n    reset: () => T(`No problem, I have cleared this booking. Type \"menu\" to start again.`, `Theek hai, ye booking maine hata di. Dobara shuru karne ke liye \"menu\" likhiye.`, `ठीक है, मैंने यह बुकिंग हटा दी। फिर शुरू करने के लिए \"menu\" लिखिए।`),\n    dupe: () => T(`You already have a request for these dates. Send 3 to see its status.`, `In dates ke liye aapki request pehle se hai. Status ke liye 3 bhejiye.`, `इन तारीखों के लिए आपकी रिक्वेस्ट पहले से है। स्टेटस के लिए 3 भेजिए।`),\n    dbError: () => T(`Sorry, something went wrong on our side. Please reply YES to try again.`, `Sorry, hamari taraf se kuch gadbad ho gayi. Dobara try karne ke liye YES likhiye.`, `क्षमा करें, हमारी तरफ से कुछ गड़बड़ हो गई। फिर कोशिश के लिए YES लिखिए।`),\n    noBooking: () => T(`I could not find a booking for your number. Type 1 to make one.`, `Aapke number par koi booking nahi mili. Booking ke liye 1 bhejiye.`, `आपके नंबर पर कोई बुकिंग नहीं मिली। बुकिंग के लिए 1 भेजिए।`),\n    statusOne: b => {\n      const base = `${b.code}: ${b.rooms}, ${b.ci} to ${b.co}, ${P(b.total)}`;\n      const m = {\n        PENDING: T(`⏳ ${base}\\nNOT confirmed yet. Waiting for receptionist approval (about ${b.mins} min left). I will message you as soon as it is decided.`, `⏳ ${base}\\nAbhi confirm NAHI hui. Receptionist ke approval ka wait hai (lagbhag ${b.mins} minute bache). Decision hote hi main message karunga.`, `⏳ ${base}\\nअभी कन्फर्म नहीं हुई। रिसेप्शनिस्ट के अप्रूवल का इंतज़ार है (लगभग ${b.mins} मिनट बचे)। फैसला होते ही मैं मैसेज करूँगा।`),\n        CONFIRMED: T(`✅ ${base}\\nCONFIRMED. Please carry your original photo ID.`, `✅ ${base}\\nCONFIRMED hai. Original photo ID saath laayein.`, `✅ ${base}\\nकन्फर्म है। कृपया ओरिजिनल फोटो ID साथ लाएं।`),\n        REJECTED: T(`❌ ${base}\\nNot approved.${b.reason ? ' Reason: ' + b.reason + '.' : ''} Send 1 to try other dates or rooms.`, `❌ ${base}\\nApprove nahi hui.${b.reason ? ' Reason: ' + b.reason + '.' : ''} Dusri dates ya rooms ke liye 1 bhejiye.`, `❌ ${base}\\nअप्रूव नहीं हुई।${b.reason ? ' कारण: ' + b.reason + '।' : ''} दूसरी तारीख या कमरे के लिए 1 भेजिए।`),\n        EXPIRED: T(`⌛ ${base}\\nNOT confirmed: it was not approved in time and the rooms were released. Send 1 to request again.`, `⌛ ${base}\\nConfirm NAHI hui: time par approve nahi hui aur rooms release ho gaye. Dobara request ke liye 1 bhejiye.`, `⌛ ${base}\\nकन्फर्म नहीं हुई: समय पर अप्रूव नहीं हुई और कमरे छोड़ दिए गए। फिर रिक्वेस्ट के लिए 1 भेजिए।`),\n        CANCELLED: T(`🚫 ${base}\\nCancelled.`, `🚫 ${base}\\nCancel ho chuki hai.`, `🚫 ${base}\\nरद्द हो चुकी है।`)\n      };\n      return m[b.status] || base;\n    },\n    cancelAsk: b => T(`Do you want to cancel booking ${b.code} (${b.rooms}, ${b.ci} to ${b.co})? Reply YES or NO.`, `Kya aap booking ${b.code} (${b.rooms}, ${b.ci} se ${b.co}) cancel karna chahte hain? YES ya NO likhiye.`, `क्या आप बुकिंग ${b.code} (${b.rooms}, ${b.ci} से ${b.co}) कैंसिल करना चाहते हैं? YES या NO लिखिए।`),\n    cannotCancel: () => T(`I could not find a booking that can be cancelled. Cancellation is possible only within 6 hours of booking. Send 5 to talk to the receptionist.`, `Cancel ho sake aisi booking nahi mili. Cancel sirf booking ke 6 ghante ke andar ho sakti hai. Receptionist se baat ke liye 5 bhejiye.`, `कैंसिल हो सके ऐसी बुकिंग नहीं मिली। कैंसिल केवल बुकिंग के 6 घंटे के अंदर हो सकता है। रिसेप्शनिस्ट से बात के लिए 5 भेजिए।`),\n    cancelled: code => T(`Booking ${code} has been cancelled. ✅`, `Booking ${code} cancel ho gayi hai. ✅`, `बुकिंग ${code} कैंसिल हो गई है। ✅`),\n    cancelFailed: () => T(`I could not cancel it (it may already be cancelled or too old). Send 5 to talk to the receptionist.`, `Cancel nahi ho payi (shayad pehle hi cancel hai ya bahut purani hai). Receptionist se baat ke liye 5 bhejiye.`, `कैंसिल नहीं हो पाई (शायद पहले ही कैंसिल है या बहुत पुरानी है)। रिसेप्शनिस्ट से बात के लिए 5 भेजिए।`),\n    help: () => T(`I have informed the receptionist. They will contact you as soon as possible. 🙏`, `Maine receptionist ko bata diya hai. Wo jaldi aapse sampark karenge. 🙏`, `मैंने रिसेप्शनिस्ट को बता दिया है। वे जल्द ही आपसे संपर्क करेंगे। 🙏`),\n    helpAlert: (phone, txt) => `🙋 Guest needs help\\n+${phone}\\nMessage: \"${String(txt).slice(0, 300)}\"\\nPlease contact the guest.`\n  };\n};\nconst ackRooms = (L, s) => {\n  const r = (s.ac ? s.ac + ' AC' : '') + (s.ac && s.nac ? ' + ' : '') + (s.nac ? s.nac + ' Non-AC' : '');\n  return ({ eng: `Noted: ${r} room(s). `, hin: `Note kar liya: ${r} room. `, dev: `नोट कर लिया: ${r} कमरे। ` })[L] || '';\n};\nconst takenMsg = L => ({ eng: 'Sorry, those rooms were just taken by someone else. Please send your room requirement again or try other dates.', hin: 'Sorry, ye rooms abhi kisi aur ne le liye. Apni room requirement dobara bhejiye ya dusri dates try kijiye.', dev: 'क्षमा करें, वे कमरे अभी किसी और ने ले लिए। कृपया अपनी ज़रूरत फिर से भेजिए या दूसरी तारीखें चुनिए।' })[L] || '';\nconst roomsText = s => (s.ac ? s.ac + ' AC' : '') + (s.ac && s.nac ? ' + ' : '') + (s.nac ? s.nac + ' Non-AC' : '');\n\nconst techErr = L => ({ eng: 'Sorry, we had a small technical problem. Please send your last message again.', hin: 'Sorry, thodi technical problem aa gayi. Apna last message dobara bhejiye.', dev: 'क्षमा करें, थोड़ी तकनीकी समस्या आ गई। कृपया अपना पिछला संदेश फिर से भेजिए।' })[L] || '';\n\nconst cfgOf = r => ({ hotel: r.hotel_name || 'our hotel', ac: Number(r.ac_rate) || 3000, nac: Number(r.nonac_rate) || 1800, maxg: Number(r.max_guests) || 4, cot: String(r.checkout_time || '11:00'), rec: r.rec_phone || '' });\nconst sqq = s => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\").replace(/[\\r\\n]+/g, ' ');\nconst nightsOf = (ci, co) => Math.round((new Date(co + 'T00:00:00Z') - new Date(ci + 'T00:00:00Z')) / 86400e3);\nconst maskId = n => 'X'.repeat(Math.max(0, String(n).length - 4)) + String(n).slice(-4);\n\n// ===== BRAIN: deterministic hotel-receptionist conversation (no LLM for booking) =====\nconst msg = $('Clean Message').first().json;\nconst row = $input.first() ? $input.first().json : {};\nconst from = String(msg.from).replace(/\\D/g, '');\nconst L = msg.lang || 'eng';\nconst raw = String(msg.text || '').trim();\nconst n = raw.toLowerCase().replace(/\\s+/g, ' ');\nconst c = cfgOf(row), M = mk(L, c);\nconst today = todayIST();\nlet bookings = [];\ntry { const b = typeof row.bookings_json === 'string' ? JSON.parse(row.bookings_json) : row.bookings_json; if (Array.isArray(b)) bookings = b.map(x => ({ ...x, total: Number(x.total) || 0, mins: Number(x.mins) || 0 })).sort((a, b) => b.id - a.id); } catch (e) {}\n\nconst sd = $getWorkflowStaticData('global');\nsd.flow = sd.flow || {};\nfor (const k of Object.keys(sd.flow)) if (Date.now() - (sd.flow[k].ts || 0) > 3 * 3600e3) delete sd.flow[k];\nlet s = sd.flow[from];\nif (!s) s = { step: 'IDLE' };\nconst save = () => { s.ts = Date.now(); sd.flow[from] = s; };\nconst wipe = () => { delete sd.flow[from]; };\nconst fresh = () => { s = { step: 'IDLE' }; };\n\nconst out = (reply, extra) => [{ json: { action: 'reply', output: reply, ...(extra || {}) } }];\nconst say = reply => { save(); return out(reply); };\nconst faq = (suffix) => { save(); return [{ json: { action: 'faq', suffix: suffix ? '\\n\\n' + suffix : '' } }]; };\n\n// ----- intents -----\nconst GREET = /^(hi+|hello+|hey+|hy|hlo|helo|namaste|namaskar|good (morning|afternoon|evening)|menu|start|help|restart|reset|home|main menu|नमस्ते|नमस्कार|हेलो|मेनू)(?=$|[\\s,.!?])/i;\nconst RESET = /^(menu|restart|reset|start over|home|main menu|मेनू)(?=$|[\\s,.!?])/i;\nconst I_STATUS = /\\b(status|my booking|meri booking|booking status|check booking|booking check|kya hua)\\b|स्टेटस|मेरी बुकिंग/i;\nconst I_CANCEL = /\\bcancel|रद्द|कैंसिल|\\bcancle\\b/i;\nconst I_HELP = /\\b(receptionist|reception|manager|human|call me|talk to|speak to|contact|complaint|agent|baat karni|baat karna)\\b|रिसेप्शन|मैनेजर/i;\nconst I_RATES = /\\b(rate|rates|price|prices|pricing|cost|charges?|tariff|kitna|kitne|kimat|rent|paisa|paise|facilities|amenities|info|information)\\b|रेट|कीमत|किराया/i;\nconst I_BOOK = /\\b(book|booking|reserve|reservation|room|rooms|kamra|kamre|chahiye|chahie|vacancy)\\b|कमरा|कमरे|बुक|चाहिए/i;\nconst I_FAQ = /\\b(wifi|wi-fi|parking|food|restaurant|breakfast|lunch|dinner|taxi|cab|pool|gym|laundry|location|address|where|near|map|pet|pets|smoking|party|event|tour|spa|bar|alcohol|early|late|couple|unmarried|family|foreigner|gst|invoice|bill)\\b/i;\n\n// ----- slots from any message -----\nconst pd = parseDates(raw, today);\nconst pr = parseRooms(pd.rest);\nconst pg = parseGuests(pd.rest);\nconst bare = /^\\s*(\\d{1,2})\\s*$/.test(raw) ? +raw.trim() : null;\nconst dateErr = () => {\n  if (s.ci && s.ci < iso(today)) return 'past';\n  if (s.ci && s.co && s.co <= s.ci) return 'order';\n  return null;\n};\nfunction applyDates() {\n  const d = pd.dates;\n  if (d.length >= 2) { s.ci = iso(d[0]); s.co = iso(d[1]); }\n  else if (d.length === 1) {\n    if (pd.nights) { s.ci = iso(d[0]); s.co = iso(addDays(d[0], pd.nights)); }\n    else if (s.ci && !s.co && iso(d[0]) > s.ci) s.co = iso(d[0]);\n    else if (s.ci && s.co) { s.ci = iso(d[0]); s.co = null; }\n    else { s.ci = iso(d[0]); s.co = null; }\n  } else if (pd.nights && s.ci) s.co = iso(addDays(new Date(s.ci + 'T00:00:00Z'), pd.nights));\n  s.total = null;\n}\nfunction applyRooms() {\n  if (pr.any) { s.ac = pr.ac; s.nac = pr.nac; s.pendType = null; s.pendCount = null; s.total = null; return true; }\n  if (pr.pendType || pr.pendCount) { s.pendType = pr.pendType || s.pendType || null; s.pendCount = pr.pendCount || s.pendCount || null; }\n  if (s.pendType && s.pendCount) { if (s.pendType === 'AC') { s.ac = s.pendCount; s.nac = 0; } else { s.nac = s.pendCount; s.ac = 0; } s.pendType = s.pendCount = null; s.total = null; return true; }\n  return false;\n}\nconst hasRooms = () => (s.ac || 0) + (s.nac || 0) > 0;\nconst nRooms = () => (s.ac || 0) + (s.nac || 0);\n\n// next question / action for the booking flow\nfunction advance(prefix) {\n  prefix = prefix || '';\n  const e = dateErr();\n  if (e === 'past') { s.ci = s.co = null; s.step = 'DATES'; return say(M.pastDate()); }\n  if (e === 'order') { s.co = null; s.ci = null; s.step = 'DATES'; return say(M.badOrder()); }\n  if (!s.ci) { s.step = 'DATES'; return say(prefix + M.askDates()); }\n  if (!s.co) { s.step = 'DATES'; return say(prefix + M.askCheckout(s)); }\n  s.nights = nightsOf(s.ci, s.co);\n  if (!hasRooms()) {\n    s.step = 'ROOMS';\n    if (s.pendCount && !s.pendType) return say(prefix + M.askRoomType(s.pendCount));\n    if (s.pendType && !s.pendCount) return say(prefix + M.askRoomCount(s.pendType));\n    return say(prefix + M.askRooms(s));\n  }\n  if (!s.total) {          // ask the database for availability + the total price\n    s.step = 'CHECK'; save();\n    const sql = `SELECT q.*, IF(q.date_check = 'OK' AND q.ac_available >= q.ac_requested AND q.nonac_available >= q.nonac_requested AND q.ac_requested + q.nonac_requested > 0, 'YES', 'NO') AS can_book FROM (SELECT IF(p.ci IS NULL OR p.co IS NULL OR DATEDIFF(p.co, p.ci) < 1 OR p.ci < hb_today_ist(), 'INVALID_DATES', 'OK') AS date_check, DATEDIFF(p.co, p.ci) AS days, p.ac AS ac_requested, hb_free_rooms(p.ci, p.co, 'AC') AS ac_available, p.nac AS nonac_requested, hb_free_rooms(p.ci, p.co, 'NonAC') AS nonac_available, DATEDIFF(p.co, p.ci) * (p.ac * t1.rate_per_night + p.nac * t2.rate_per_night) + ROUND(DATEDIFF(p.co, p.ci) * (p.ac * t1.rate_per_night + p.nac * t2.rate_per_night) * IFNULL((SELECT CAST(cfg_value AS DECIMAL(5,2)) FROM hb_config WHERE cfg_key = 'tax_percent'), 0) / 100, 2) AS total_amount FROM (SELECT STR_TO_DATE('${s.ci}', '%Y-%m-%d') AS ci, STR_TO_DATE('${s.co}', '%Y-%m-%d') AS co, ${+s.ac || 0} AS ac, ${+s.nac || 0} AS nac) p JOIN hb_room_types t1 ON t1.code = 'AC' JOIN hb_room_types t2 ON t2.code = 'NonAC') q`;\n    return [{ json: { action: 'sql', kind: 'check', sql, prefix } }];\n  }\n  if (s.guests && s.guests > c.maxg * nRooms()) s.guests = null;\n  if (!s.guests && s.guestsHint) { const g = s.guestsHint; s.guestsHint = null; return takeGuests(g); }\n  if (!s.guests) { s.step = 'GUESTS'; return say(prefix + M.askGuests(s)); }\n  if (!s.name) { s.step = 'NAME'; return say(prefix + M.askName()); }\n  if (!s.idn) { s.step = 'ID'; return say(prefix + (s.idt ? M.askIdNumber(s.idt) : M.askId())); }\n  s.step = 'CONFIRM';\n  return say(M.summary({ ...s, idMasked: maskId(s.idn) }));\n}\n\nconst reprompt = () => ({ DATES: s.ci ? M.askCheckout(s) : M.askDates(), ROOMS: M.askRooms(s), CHECK: M.askRooms(s), GUESTS: M.askGuestsOnly(), FEWER: M.fewer(s.guests, nRooms()), NAME: M.askName(), ID: s.idt ? M.askIdNumber(s.idt) : M.askId(), CONFIRM: M.summary({ ...s, idMasked: maskId(s.idn || '') }) })[s.step] || '';\nconst unclear = () => (raw.includes('?') || raw.split(/\\s+/).length >= 4) ? faq(reprompt()) : say(reprompt());\n// guests rule: max per room; fewer guests than rooms needs a yes\nfunction takeGuests(g) {\n  const r = nRooms();\n  if (!g || g < 1) return say(M.askGuestsOnly());\n  if (g > c.maxg * r) return say(M.tooMany(g, r));\n  s.guests = g;\n  if (r > 1 && g <= r) { s.step = 'FEWER'; return say(M.fewer(g, r)); }\n  return advance();\n}\n\ntry {\n  // ===== 0. hard resets & greetings =====\n  if (RESET.test(n)) { wipe(); fresh(); return say(M.welcome()); }\n  const midFlow = !['IDLE'].includes(s.step);\n  const anySlot0 = pd.dates.length || pd.nights || pr.any || pr.pendType || pr.pendCount;\n  const onlyGreet = GREET.test(n) && n.split(' ').length <= 3 && !anySlot0;\n  if (onlyGreet && !midFlow) { fresh(); return say(M.welcome()); }\n  if (onlyGreet && midFlow && /^(hi+|hello+|hey+|namaste|नमस्ते|good )/i.test(n)) { fresh(); return say(M.welcome()); }\n  if (midFlow && s.step !== 'CANCEL_CONFIRM' && /^(cancel|stop|exit|quit|abort)\\b/.test(n) && n.split(' ').length <= 2) { wipe(); fresh(); return out(M.reset()); }\n\n  // ===== 1. confirmations that wait for yes/no =====\n  if (s.step === 'CANCEL_CONFIRM') {\n    if (yes(raw)) { s.step = 'IDLE'; const code = String(s.cancelCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase(); save();\n      const phone = from;\n      return [{ json: { action: 'sql', kind: 'cancel', code, sql: `UPDATE hb_bookings b JOIN hb_guests g ON g.id = b.guest_id SET b.status = 'CANCELLED', b.decided_at = NOW() WHERE b.booking_code = '${code}' AND g.phone = '${phone}' AND b.status IN ('PENDING','CONFIRMED') AND b.created_at > NOW() - INTERVAL 6 HOUR; SELECT ROW_COUNT() AS cancelled_rows;` } }]; }\n    if (no(raw)) { fresh(); return say(M.welcome()); }\n    fresh();\n  }\n\n  if (s.step === 'FEWER') {\n    if (yes(raw)) return advance();\n    if (no(raw)) { s.ac = 0; s.nac = 0; s.total = null; s.pendType = s.pendCount = null; s.step = 'ROOMS'; return say(M.askRooms(s)); }\n    if (pr.any) { applyRooms(); s.step = 'ROOMS'; return advance(); }\n    if (bare || pg) return takeGuests(bare || pg);\n    return say(M.fewer(s.guests, nRooms()));\n  }\n\n  if (['NAME', 'ID', 'CONFIRM'].includes(s.step) && pg && !pr.any && !pd.dates.length && !(s.step === 'NAME' && /^[\\p{L} .'-]+$/u.test(raw))) return takeGuests(pg);\n\n  if (s.step === 'CONFIRM') {\n    if (yes(raw)) {\n      const sql = `CALL hb_create_booking('${from}', '${sqq(s.name)}', '${s.idt}', '${String(s.idn).replace(/[^A-Za-z0-9]/g, '')}', '${s.ci}', '${s.co}', ${+s.ac || 0}, ${+s.nac || 0}, ${+s.guests || 1}, '${L === 'dev' ? 'hindi' : L === 'hin' ? 'hinglish' : 'english'}', 0, @bc, @br); SELECT @bc AS booking_code, @br AS result;`;\n      s.step = 'CREATING'; save();\n      return [{ json: { action: 'sql', kind: 'create', sql } }];\n    }\n    if (no(raw)) { wipe(); fresh(); return out(M.reset()); }\n    return say(M.summary({ ...s, idMasked: maskId(s.idn) }));\n  }\n  if (s.step === 'CREATING') {   // a repeated \"yes\" while the request is being created\n    if (yes(raw)) return out(M.dupe());\n    s.step = 'CONFIRM';\n  }\n\n  // ===== 2. questions that work at any step =====\n  if (s.step !== 'ID' && s.step !== 'NAME') {\n    if (I_HELP.test(n) && !/\\b(book|booking)\\b/.test(n)) { return [{ json: { action: 'help', output: M.help(), rec_phone: c.rec, alert: M.helpAlert(from, raw) } }]; }\n    if (I_STATUS.test(n)) {\n      if (!bookings.length) return say(M.noBooking());\n      return say(bookings.slice(0, 3).map(b => M.statusOne({ ...b }, L)).join('\\n\\n'));\n    }\n    if (I_CANCEL.test(n) && !(s.step === 'FEWER')) {\n      const b = bookings.find(x => x.cancel && ['PENDING', 'CONFIRMED'].includes(x.status));\n      if (!b) return say(M.cannotCancel());\n      s.step = 'CANCEL_CONFIRM'; s.cancelCode = b.code;\n      return say(M.cancelAsk(b));\n    }\n  }\n\n  if (s.total && s.ci && s.co && !bare && /(how|kese|kaise|kaisa|calculat|breakdown|hisab|hisaab|why|kyu|kyun|explain|samjha|detail)/.test(n) && /(total|amount|price|rate|paise|paisa|rs|bill|cost)/.test(n)) {\n    s.nights = nightsOf(s.ci, s.co);\n    return say(M.breakdown(s) + '\\n\\n' + reprompt());\n  }\n\n  // ===== 3. menu choices (only on the menu) =====\n  if (s.step === 'IDLE' && bare >= 1 && bare <= 5) {\n    if (bare === 1) { s.step = 'DATES'; return say(M.askDates()); }\n    if (bare === 2) return say(M.rates());\n    if (bare === 3) return say(bookings.length ? bookings.slice(0, 3).map(b => M.statusOne({ ...b }, L)).join('\\n\\n') : M.noBooking());\n    if (bare === 4) { const b = bookings.find(x => x.cancel && ['PENDING', 'CONFIRMED'].includes(x.status)); if (!b) return say(M.cannotCancel()); s.step = 'CANCEL_CONFIRM'; s.cancelCode = b.code; return say(M.cancelAsk(b)); }\n    return [{ json: { action: 'help', output: M.help(), rec_phone: c.rec, alert: M.helpAlert(from, raw) } }];\n  }\n\n  // ===== 4. booking slot-filling =====\n  const anySlot = pd.dates.length || pd.nights || pr.any || pr.pendType || pr.pendCount;\n  if (s.step === 'IDLE' && I_FAQ.test(n) && !anySlot) return faq('');\n  if (s.step === 'IDLE' && I_RATES.test(n) && !pd.dates.length && !pr.any) return say(M.rates());\n  const startBooking = s.step === 'IDLE' && (anySlot || (I_BOOK.test(n) && !I_RATES.test(n)));\n  if (startBooking) {\n    s.step = 'DATES';\n    if (pd.dates.length || pd.nights) applyDates();\n    const gotRooms = applyRooms();\n    if (pg && hasRooms()) s.guestsHint = pg;\n    return advance(gotRooms ? ackRooms(L, s) : '');\n  }\n  if (s.step === 'IDLE' && I_RATES.test(n)) return say(M.rates());\n  if (s.step === 'IDLE' && I_FAQ.test(n)) return faq('');\n\n  if (s.step === 'DATES') {\n    if (pd.dates.length || pd.nights) { applyDates(); const gr = applyRooms(); return advance(gr ? ackRooms(L, s) : ''); }\n    if (I_RATES.test(n)) return say(M.rates() + '\\n\\n' + M.askDates());\n    return unclear();\n  }\n  if (s.step === 'ROOMS' || s.step === 'CHECK') {\n    const dch = pd.dates.length || pd.nights;\n    if (dch) applyDates();\n    const gr = applyRooms();\n    if (!gr && bare && s.pendType) { s.pendCount = bare; applyRooms(); }\n    else if (!gr && bare && !s.pendType) { s.pendCount = bare; s.ac = 0; s.nac = 0; s.total = null; }\n    if (hasRooms() || s.pendType || s.pendCount || dch) return advance();\n    if (I_RATES.test(n)) return say(M.rates() + '\\n\\n' + M.askRooms(s));\n    return unclear();\n  }\n  if (s.step === 'GUESTS') {\n    if (pd.dates.length || pd.nights) { applyDates(); }\n    if (pr.any) { applyRooms(); s.step = 'ROOMS'; return advance(); }\n    if (!s.total) return advance();\n    const g = bare || pg;\n    if (g) return takeGuests(g);\n    if (I_RATES.test(n)) return say(M.rates() + '\\n\\n' + M.askGuestsOnly());\n    return unclear();\n  }\n  if (s.step === 'NAME') {\n    let nm = raw.replace(/^(my name is|my name|name is|name|i am|i'm|this is|mera naam|mera name|naam|main|मेरा नाम|नाम)\\s*(hai|is|:|-)?\\s*/i, '').replace(/\\s*(hai|है)$/i, '').trim();\n    if (/^[\\p{L}][\\p{L}\\p{M} .'-]{1,59}$/u.test(nm) && !/\\d/.test(nm) && !yes(nm) && !no(nm)) { s.name = nm.replace(/\\s+/g, ' '); return advance(); }\n    return (raw.includes('?') || nm.split(' ').length >= 5) ? faq(reprompt()) : say(M.badName());\n  }\n  if (s.step === 'ID') {\n    const t = idTypeOf(raw) || null;\n    let num = idNumberOf(raw);\n    if (t) s.idt = t;\n    if (!num && t && s.idnPending) { num = s.idnPending; }\n    if (num && s.idt) {\n      const r = idCheck(s.idt, num);\n      if (r !== 'OK') { const bad = s.idt; s.idn = null; return say(M.idBad(r)); }\n      s.idn = num; return advance();\n    }\n    if (num && !s.idt) { s.idnPending = num; return say(M.askIdType()); }\n    if (s.idt) return unclear();\n    return unclear();\n  }\n\n  // ===== 5. anything else (FAQ / small talk) -> LLM, then re-ask the pending question =====\n  return faq(s.step === 'IDLE' ? '' : reprompt());\n} catch (err) {\n  return out(M.welcome());\n}\n"
+      },
+      "id": "2d611586-b95b-4773-b506-859cf74485c5",
+      "name": "Brain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -1552
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "513bfcba-2cd1-487d-bb40-76989e184398",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "reply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renamedOutput": true,
+              "outputKey": "reply"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "f9ea4bdb-7c94-4da5-a0f4-d8a3d251ef30",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "faq",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renamedOutput": true,
+              "outputKey": "faq"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8b811be6-adb9-417c-be18-3fce785ab316",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "sql",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renamedOutput": true,
+              "outputKey": "sql"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "1961fe9a-33b6-41e4-9deb-799a5a9c537b",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renamedOutput": true,
+              "outputKey": "help"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "96bd5a45-dede-4688-bc19-abbc91e3b749",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1664,
+        -1552
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "b5d70f6a-f4ed-4b68-b29e-280492f02a51",
+      "name": "Run SQL",
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        1888,
+        -1450
+      ],
+      "credentials": {
+        "mySql": {
+          "id": "",
+          "name": "MySQL account"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== shared helpers (pasted into both Code nodes by the builder) =====\nconst todayIST = () => { const d = new Date(Date.now() + 5.5 * 3600e3); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); };\nconst iso = d => d.toISOString().slice(0, 10);\nconst addDays = (d, n) => new Date(d.getTime() + n * 86400e3);\nconst MONTHS = { jan:0, january:0, feb:1, february:1, mar:2, march:2, apr:3, april:3, may:4, jun:5, june:5, jul:6, july:6, aug:7, august:7, sep:8, sept:8, september:8, oct:9, october:9, nov:10, november:10, dec:11, december:11 };\nconst NUMW = { ek:1, one:1, do:2, two:2, teen:3, three:3, char:4, chaar:4, four:4, paanch:5, panch:5, five:5, chhe:6, six:6, saat:7, seven:7, aath:8, eight:8, nau:9, nine:9, das:10, ten:10 };\nconst mkDate = (dd, mm, yy, today) => {\n  let y = yy ? (yy < 100 ? 2000 + yy : yy) : today.getUTCFullYear();\n  let d = new Date(Date.UTC(y, mm, dd));\n  if (d.getUTCMonth() !== mm || d.getUTCDate() !== dd) return null;      // 31 Feb etc.\n  if (!yy && d < today) d = new Date(Date.UTC(y + 1, mm, dd));\n  return d;\n};\n// returns { dates: [Date...], nights: n|null, rest: text without the matched date parts }\nconst deva = s => String(s).toLowerCase()\n  .replace(/नॉन[\\s-]*एसी|नान[\\s-]*एसी/g, ' non ac ').replace(/एसी/g, ' ac ')\n  .replace(/कमरों|कमरे|कमरा/g, ' rooms ').replace(/रातों|रातें|रात/g, ' nights ').replace(/दिन/g, ' days ')\n  .replace(/परसों/g, ' parso ').replace(/कल/g, ' kal ').replace(/आज/g, ' aaj ')\n  .replace(/मेहमान|लोग|व्यक्ति|सदस्य/g, ' guests ')\n  .replace(/एक/g, ' 1 ').replace(/दो/g, ' 2 ').replace(/तीन/g, ' 3 ').replace(/चार/g, ' 4 ').replace(/पाँच|पांच/g, ' 5 ').replace(/छह|छः/g, ' 6 ').replace(/सात/g, ' 7 ').replace(/आठ/g, ' 8 ').replace(/नौ/g, ' 9 ').replace(/दस/g, ' 10 ')\n  .replace(/जनवरी/g, ' jan ').replace(/फरवरी/g, ' feb ').replace(/मार्च/g, ' mar ').replace(/अप्रैल/g, ' apr ').replace(/मई/g, ' may ').replace(/जून/g, ' jun ').replace(/जुलाई/g, ' jul ').replace(/अगस्त/g, ' aug ').replace(/सितंबर|सितम्बर/g, ' sep ').replace(/अक्टूबर|अक्तूबर/g, ' oct ').replace(/नवंबर|नवम्बर/g, ' nov ').replace(/दिसंबर|दिसम्बर/g, ' dec ')\n  .replace(/से/g, ' se ').replace(/तक/g, ' tak ');\nfunction parseDates(raw, today) {\n  let t = ' ' + deva(raw) + ' ';\n  const found = [];     // {pos, date}\n  const take = (re, fn) => { t = t.replace(re, (...a) => { const pos = a[a.length - 2]; const r = fn(...a); if (r) { found.push({ pos, date: r }); return ' '.repeat(a[0].length); } return a[0]; }); };\n  take(/\\b(\\d{4})-(\\d{1,2})-(\\d{1,2})\\b/g, (m, y, mo, d) => mkDate(+d, +mo - 1, +y, today));\n  // \"12 se 15 nov\", \"12 to 15 nov\", \"12-15 nov\"\n  t = t.replace(/\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:to|se|-|till|tak|until|–)\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+([a-z]{3,9})\\b(?:,?\\s*(\\d{4}))?/g, (m, d1, d2, mon, y, pos) => {\n    const mm = MONTHS[mon]; if (mm === undefined) return m;\n    const a = mkDate(+d1, mm, y ? +y : 0, today), b = mkDate(+d2, mm, y ? +y : 0, today); if (!a || !b) return m;\n    found.push({ pos, date: a }); found.push({ pos: pos + 1, date: b }); return ' '.repeat(m.length);\n  });\n  take(/\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:of\\s+)?([a-z]{3,9})\\b(?:,?\\s*(\\d{4}))?/g, (m, d, mon, y) => MONTHS[mon] === undefined ? null : mkDate(+d, MONTHS[mon], y ? +y : 0, today));\n  take(/\\b([a-z]{3,9})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s*(\\d{4}))?/g, (m, mon, d, y) => MONTHS[mon] === undefined ? null : mkDate(+d, MONTHS[mon], y ? +y : 0, today));\n  take(/\\b(\\d{1,2})[\\/.\\-](\\d{1,2})(?:[\\/.\\-](\\d{2,4}))?\\b/g, (m, d, mo, y) => (+mo >= 1 && +mo <= 12) ? mkDate(+d, +mo - 1, y ? +y : 0, today) : null);\n  take(/\\bday after tomorrow\\b|\\bparso\\b|\\bparsu\\b/g, () => addDays(today, 2));\n  take(/\\btomorrow\\b|\\btmrw\\b|\\btomorow\\b|\\bkal\\b/g, () => addDays(today, 1));\n  take(/\\btoday\\b|\\baaj\\b|\\bab\\b(?=\\s*(se|ko))/g, () => today);\n  found.sort((a, b) => a.pos - b.pos);\n  let nights = null;\n  const nm = t.match(/(\\d+|ek|do|teen|char|one|two|three|four|five)\\s*(?:night|nights|raat|raaton|din|days?)\\b/);\n  if (nm) { nights = NUMW[nm[1]] || +nm[1]; t = t.replace(nm[0], ' '.repeat(nm[0].length)); }\n  return { dates: found.map(f => f.date), nights, rest: t };\n}\nfunction parseRooms(rest) {\n  let t = ' ' + rest.toLowerCase().replace(/non[\\s\\-_.]*a\\.?\\s*\\/?\\s*c\\b\\.?/g, ' NONAC ').replace(/\\ba\\s*\\/\\s*c\\b|\\bac\\b/g, ' AC ').replace(/\\bnon\\s*ac\\b/g, ' NONAC ') + ' ';\n  const num = s => NUMW[s] || +s;\n  let ac = 0, nac = 0, any = false, pendType = null, pendCount = null;\n  const NUM = '(\\\\d{1,2}|ek|one|do|two|teen|three|char|chaar|four|paanch|five|six|seven|eight|nine|ten)';\n  let m;\n  const re1 = new RegExp(NUM + '\\\\s*(?:x|\\\\*)?\\\\s*(?:rooms?\\\\s*)?(NONAC|AC)\\\\b', 'g');\n  while ((m = re1.exec(t))) { any = true; if (m[2] === 'AC') ac += num(m[1]); else nac += num(m[1]); }\n  t = t.replace(re1, ' ');\n  const re2 = new RegExp('(NONAC|AC)\\\\s*(?:rooms?|kamre|kamra)?\\\\s*[:x*\\\\-]?\\\\s*' + NUM + '\\\\b(?!\\\\s*(?:guests?|people|persons?|members?|log|pax|jane))', 'g');\n  while ((m = re2.exec(t))) { any = true; if (m[1] === 'AC') ac += num(m[2]); else nac += num(m[2]); }\n  t = t.replace(re2, ' ');\n  if (!any) {\n    const hasAC = /\\bAC\\b/.test(t), hasN = /\\bNONAC\\b/.test(t);\n    const cnt = t.match(new RegExp(NUM + '\\\\s*(?:rooms?|kamre|kamra|kamron)\\\\b'));\n    if (cnt) pendCount = num(cnt[1]);\n    if (hasAC && !hasN) pendType = 'AC'; else if (hasN && !hasAC) pendType = 'NONAC';\n    if (pendType && pendCount) { if (pendType === 'AC') ac = pendCount; else nac = pendCount; any = true; pendType = null; pendCount = null; }\n  }\n  return { ac, nac, any, pendType, pendCount };\n}\nfunction parseGuests(rest) {\n  const t = ' ' + rest.toLowerCase() + ' ';\n  const NUM = '(\\\\d{1,2}|ek|one|do|two|teen|three|char|chaar|four|paanch|five|six|seven|eight|nine|ten)';\n  let m = t.match(new RegExp(NUM + '\\\\s*(?:guests?|people|persons?|members?|pax|log|logon|jane|aadmi|adults?|bande|vyakti|bachhe|kids?|children)\\\\b'));\n  if (m) return NUMW[m[1]] || +m[1];\n  m = t.match(new RegExp('\\\\b(?:for|total|guests?|members?)\\\\s*[:\\\\-]?\\\\s*' + NUM + '\\\\b'));\n  if (m) return NUMW[m[1]] || +m[1];\n  return null;\n}\n// ----- ID validation (same rules as the database; the database re-checks) -----\nconst VD = [[0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],[3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],[5,9,8,7,6,0,4,3,2,1],[6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],[9,8,7,6,5,4,3,2,1,0]];\nconst VP = [[0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],[8,9,1,6,0,4,3,5,2,7],[9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],[2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8]];\nconst verhoeff = s => { let c = 0; const a = s.split('').reverse(); for (let i = 0; i < a.length; i++) c = VD[c][VP[i % 8][+a[i]]]; return c === 0; };\nconst ID_TYPES = { AADHAAR: 'Aadhaar', PASSPORT: 'Passport', DRIVING_LICENSE: 'Driving Licence', VOTER_ID: 'Voter ID' };\nfunction idTypeOf(t) {\n  if (/आधार/.test(t)) return 'AADHAAR'; if (/पासपोर्ट/.test(t)) return 'PASSPORT'; if (/लाइसेंस|लाइसेन्स/.test(t)) return 'DRIVING_LICENSE'; if (/वोटर/.test(t)) return 'VOTER_ID';\n  t = t.toLowerCase().replace(/[^a-z ]/g, ' ');\n  if (/\\b(aadh?a+r|adhar|adhaar|uid)\\b/.test(t)) return 'AADHAAR';\n  if (/\\bpass\\s*port\\b|\\bpassport\\b/.test(t)) return 'PASSPORT';\n  if (/\\bdriving\\b|\\blicen[cs]e\\b|\\bdl\\b/.test(t)) return 'DRIVING_LICENSE';\n  if (/\\bvoter\\b|\\bepic\\b/.test(t)) return 'VOTER_ID';\n  return null;\n}\nfunction idCheck(type, num) {\n  const n = String(num || '').toUpperCase().replace(/[ -]/g, '');\n  if (type === 'AADHAAR') { if (!/^[0-9]{12}$/.test(n)) return 'AADHAAR_MUST_BE_12_DIGITS'; if (!/^[2-9]/.test(n) || !verhoeff(n)) return 'AADHAAR_NUMBER_INVALID'; }\n  else if (type === 'PASSPORT') { if (!/^[A-PR-WY][0-9]{7}$/.test(n)) return 'PASSPORT_FORMAT_INVALID'; }\n  else if (type === 'DRIVING_LICENSE') { if (!/^[A-Z]{2}[0-9]{13}$/.test(n)) return 'DRIVING_LICENSE_FORMAT_INVALID'; }\n  else if (type === 'VOTER_ID') { if (!/^[A-Z]{3}[0-9]{7}$/.test(n)) return 'VOTER_ID_FORMAT_INVALID'; }\n  else return 'UNKNOWN_ID_TYPE';\n  return 'OK';\n}\nfunction idNumberOf(t) {\n  const m = t.match(/\\b\\d[\\d\\s-]{9,15}\\d\\b/);            // 12 digits, maybe spaced or hyphenated\n  if (m && m[0].replace(/\\D/g, '').length === 12) return m[0].replace(/\\D/g, '');\n  const w = t.toUpperCase().split(/\\s+/).map(x => x.replace(/[^A-Z0-9]/g, '')).filter(x => x.length >= 6 && x.length <= 16 && /\\d/.test(x));\n  return w.length ? w[0] : null;\n}\nconst yes = t => /^(y|yes|yeah|yep|yup|yea|ya|ok|okay|okk|k|haan|han|ha|haa|ji|hanji|sure|confirm|confirmed|correct|sahi|theek hai|thik hai|theek|thik|kar do|karo|krdo|done|book kar do|book|हाँ|हां|जी|ठीक है|सही)(?=$|[\\s,.!?])/i.test(t.trim());\nconst no = t => /^(n|no|nope|nahi|nahin|nhi|na|cancel|stop|mat|wrong|galat|नहीं|नही|ना)(?=$|[\\s,.!?])/i.test(t.trim());\nconst inr = n => 'Rs ' + Number(n || 0).toLocaleString('en-IN');\nconst dshow = s => { const d = new Date(s + 'T00:00:00Z'); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }); };\n\n// ===== guest-facing texts (English / Hinglish / Hindi) =====\nconst mk = (L, c) => {\n  const T = (e, h, d) => ({ eng: e, hin: h, dev: d })[L] || e;\n  const P = n => inr(n);\n  return {\n    welcome: () => T(\n`Welcome to ${c.hotel}! 🏨\nHow can I help you today?\n\n1️⃣ Book a room\n2️⃣ Room rates & info\n3️⃣ My booking status\n4️⃣ Cancel a booking\n5️⃣ Talk to the receptionist\n\nReply with a number, or just type your question.`,\n`${c.hotel} mein aapka swagat hai! 🏨\nMain aapki kya madad kar sakta hu?\n\n1️⃣ Room book karna\n2️⃣ Room rates aur info\n3️⃣ Meri booking ka status\n4️⃣ Booking cancel karna\n5️⃣ Receptionist se baat\n\nEk number bhejiye ya seedha apna sawal likhiye.`,\n`${c.hotel} में आपका स्वागत है! 🏨\nमैं आपकी क्या मदद कर सकता हूँ?\n\n1️⃣ कमरा बुक करना\n2️⃣ कमरों के रेट और जानकारी\n3️⃣ मेरी बुकिंग का स्टेटस\n4️⃣ बुकिंग कैंसिल करना\n5️⃣ रिसेप्शनिस्ट से बात\n\nकोई नंबर भेजिए या सीधे अपना सवाल लिखिए।`),\n    rates: () => T(\n`Our rooms 🏨\n• AC room: ${P(c.ac)} per night\n• Non-AC room: ${P(c.nac)} per night\n• Up to ${c.maxg} guests per room\n• Check-out time: ${c.cot}\n• Payment at the hotel (no advance needed)\n• Free cancellation within 6 hours of booking\n\nTo book, type \"book\" or send 1.`,\n`Hamare rooms 🏨\n• AC room: ${P(c.ac)} per night\n• Non-AC room: ${P(c.nac)} per night\n• Ek room mein ${c.maxg} guests tak\n• Check-out time: ${c.cot}\n• Payment hotel par (advance nahi chahiye)\n• Booking ke 6 ghante ke andar cancel kar sakte hain\n\nBook karne ke liye \"book\" likhiye ya 1 bhejiye.`,\n`हमारे कमरे 🏨\n• AC कमरा: ${P(c.ac)} प्रति रात\n• Non-AC कमरा: ${P(c.nac)} प्रति रात\n• एक कमरे में ${c.maxg} मेहमान तक\n• चेक-आउट समय: ${c.cot}\n• भुगतान होटल में (एडवांस नहीं)\n• बुकिंग के 6 घंटे के अंदर कैंसिल कर सकते हैं\n\nबुक करने के लिए \"book\" लिखिए या 1 भेजिए।`),\n    askDates: () => T(\n`Sure! Please tell me your check-in and check-out dates.\nExample: 12 Nov to 14 Nov\n(Check-out time is ${c.cot}.)`,\n`Zaroor! Apni check-in aur check-out dates bataiye.\nExample: 12 Nov se 14 Nov\n(Check-out time ${c.cot} hai.)`,\n`ज़रूर! कृपया चेक-इन और चेक-आउट की तारीख बताइए।\nउदाहरण: 12 Nov से 14 Nov\n(चेक-आउट समय ${c.cot} है।)`),\n    askCheckout: s => T(`Check-in noted: ${dshow(s.ci)}. What is your check-out date?`, `Check-in ${dshow(s.ci)} note kar liya. Check-out date kya hai?`, `चेक-इन ${dshow(s.ci)} नोट कर लिया। चेक-आउट की तारीख क्या है?`),\n    badOrder: () => T(`Check-out must be after check-in. Please send both dates again (example: 12 Nov to 14 Nov).`, `Check-out date check-in ke baad honi chahiye. Dono dates dobara bhejiye (example: 12 Nov se 14 Nov).`, `चेक-आउट की तारीख चेक-इन के बाद होनी चाहिए। कृपया दोनों तारीखें फिर से भेजिए।`),\n    pastDate: () => T(`That date has already passed. Please send future dates (example: 12 Nov to 14 Nov).`, `Ye date nikal chuki hai. Aane wali dates bhejiye (example: 12 Nov se 14 Nov).`, `यह तारीख निकल चुकी है। कृपया आने वाली तारीखें भेजिए।`),\n    askRooms: s => T(\n`${dshow(s.ci)} to ${dshow(s.co)} (${s.nights} night${s.nights > 1 ? 's' : ''}). How many rooms do you need?\nAC ${P(c.ac)} / Non-AC ${P(c.nac)} per night, max ${c.maxg} guests per room.\nExample: 2 AC and 1 Non-AC`,\n`${dshow(s.ci)} se ${dshow(s.co)} (${s.nights} raat). Kitne rooms chahiye?\nAC ${P(c.ac)} / Non-AC ${P(c.nac)} per night, ek room mein max ${c.maxg} guests.\nExample: 2 AC aur 1 Non-AC`,\n`${dshow(s.ci)} से ${dshow(s.co)} (${s.nights} रात)। कितने कमरे चाहिए?\nAC ${P(c.ac)} / Non-AC ${P(c.nac)} प्रति रात, एक कमरे में अधिकतम ${c.maxg} मेहमान।\nउदाहरण: 2 AC और 1 Non-AC`),\n    askRoomType: n => T(`${n} room(s). Do you want AC or Non-AC?`, `${n} room. AC chahiye ya Non-AC?`, `${n} रूम। AC चाहिए या Non-AC?`),\n    askRoomCount: ty => T(`How many ${ty === 'AC' ? 'AC' : 'Non-AC'} rooms do you need?`, `Kitne ${ty === 'AC' ? 'AC' : 'Non-AC'} rooms chahiye?`, `कितने ${ty === 'AC' ? 'AC' : 'Non-AC'} कमरे चाहिए?`),\n    notAvail: q => T(\n`Sorry, we do not have that many rooms free for ${dshow(q.ci)} to ${dshow(q.co)}.\nAvailable: ${q.ac_available} AC and ${q.nonac_available} Non-AC.\nPlease tell me the rooms you would like instead, or send new dates.`,\n`Sorry, ${dshow(q.ci)} se ${dshow(q.co)} ke liye itne rooms free nahi hain.\nAvailable: ${q.ac_available} AC aur ${q.nonac_available} Non-AC.\nAap kitne rooms lena chahenge wo bataiye, ya nayi dates bhejiye.`,\n`क्षमा करें, ${dshow(q.ci)} से ${dshow(q.co)} के लिए इतने कमरे खाली नहीं हैं।\nउपलब्ध: ${q.ac_available} AC और ${q.nonac_available} Non-AC।\nकृपया बताइए कितने कमरे लेंगे, या नई तारीखें भेजिए।`),\n    askGuests: s => T(\n`Good news, rooms are available! 🎉\n${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''} for ${s.nights} night(s): total ${P(s.total)}.\nHow many guests in total? (max ${c.maxg} per room)`,\n`Good news, rooms available hain! 🎉\n${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}, ${s.nights} raat ka total ${P(s.total)}.\nTotal kitne guests honge? (ek room mein max ${c.maxg})`,\n`खुशखबरी, कमरे उपलब्ध हैं! 🎉\n${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}, ${s.nights} रात का कुल ${P(s.total)}।\nकुल कितने मेहमान होंगे? (एक कमरे में अधिकतम ${c.maxg})`),\n    askGuestsOnly: () => T(`How many guests in total? (max ${c.maxg} per room)`, `Total kitne guests honge? (ek room mein max ${c.maxg})`, `कुल कितने मेहमान होंगे? (एक कमरे में अधिकतम ${c.maxg})`),\n    tooMany: (g, r) => T(`${g} guests do not fit in ${r} room(s): maximum ${c.maxg} per room (${c.maxg * r} in total). Please send fewer guests, or tell me how many rooms you want (example: 3 AC).`, `${g} guests ${r} room(s) mein nahi aa sakte: ek room mein max ${c.maxg} (kul ${c.maxg * r}). Kam guests batayiye, ya kitne rooms chahiye wo likhiye (example: 3 AC).`, `${g} मेहमान ${r} कमरे में नहीं आ सकते: एक कमरे में अधिकतम ${c.maxg} (कुल ${c.maxg * r})। कम मेहमान बताइए, या कितने कमरे चाहिए लिखिए।`),\n    fewer: (g, r) => { const sg = Math.max(1, Math.ceil(g / 2)); return T(\n`You asked for ${r} rooms for ${g} guest${g > 1 ? 's' : ''}. Usually at least 2 guests share a room, so ${sg} room${sg > 1 ? 's' : ''} should be enough and will cost less.\nReply YES to keep ${r} rooms, NO to choose the rooms again (example: ${sg} AC), or send a new number of guests.`,\n`Aapne ${r} rooms maange hain aur guests ${g} hain. Aam taur par ek room mein kam se kam 2 log rehte hain, isliye ${sg} room kaafi honge aur sasta padega.\n${r} rooms hi rakhne hain to YES likhiye, rooms dobara chunne ke liye NO (example: ${sg} AC), ya guests ki nayi sankhya bhejiye.`,\n`आपने ${r} कमरे माँगे हैं और मेहमान ${g} हैं। आमतौर पर एक कमरे में कम से कम 2 लोग रहते हैं, इसलिए ${sg} कमरे काफ़ी होंगे और सस्ता पड़ेगा।\n${r} कमरे ही रखने हैं तो YES लिखिए, कमरे दोबारा चुनने के लिए NO (उदाहरण: ${sg} AC), या मेहमानों की नई संख्या भेजिए।`); },\n    askName: () => T(`May I have the guest's full name?`, `Guest ka poora naam bataiye.`, `कृपया मेहमान का पूरा नाम बताइए।`),\n    badName: () => T(`Please send the name using letters only (example: Rahul Sharma).`, `Naam sirf letters mein bhejiye (example: Rahul Sharma).`, `कृपया नाम सिर्फ अक्षरों में भेजिए (उदाहरण: राहुल शर्मा)।`),\n    askId: () => T(`Which photo ID will you show at check-in, and its number?\n(Aadhaar / Passport / Driving Licence / Voter ID)\nExample: Aadhaar 1234 5678 9012`, `Check-in par kaun sa photo ID dikhayenge, aur uska number kya hai?\n(Aadhaar / Passport / Driving Licence / Voter ID)\nExample: Aadhaar 1234 5678 9012`, `चेक-इन पर कौन सा फोटो ID दिखाएंगे, और उसका नंबर क्या है?\n(Aadhaar / Passport / Driving Licence / Voter ID)\nउदाहरण: Aadhaar 1234 5678 9012`),\n    askIdNumber: ty => T(`Please send your ${ID_TYPES[ty]} number.`, `Apna ${ID_TYPES[ty]} number bhejiye.`, `कृपया अपना ${ID_TYPES[ty]} नंबर भेजिए।`),\n    askIdType: () => T(`Which ID is this number from? (Aadhaar / Passport / Driving Licence / Voter ID)`, `Ye number kaun se ID ka hai? (Aadhaar / Passport / Driving Licence / Voter ID)`, `यह नंबर किस ID का है? (Aadhaar / Passport / Driving Licence / Voter ID)`),\n    idBad: code => {\n      const why = {\n        AADHAAR_MUST_BE_12_DIGITS: T('An Aadhaar number has exactly 12 digits.', 'Aadhaar number mein pure 12 digits hote hain.', 'आधार नंबर में ठीक 12 अंक होते हैं।'),\n        AADHAAR_NUMBER_INVALID: T('This Aadhaar number does not look valid. Please check it.', 'Ye Aadhaar number sahi nahi lag raha. Dobara check kijiye.', 'यह आधार नंबर सही नहीं लग रहा। कृपया दोबारा जाँचिए।'),\n        PASSPORT_FORMAT_INVALID: T('A passport number is 1 letter + 7 digits (example: K1234567).', 'Passport number 1 letter + 7 digits hota hai (example: K1234567).', 'पासपोर्ट नंबर 1 अक्षर + 7 अंक का होता है (उदाहरण: K1234567)।'),\n        DRIVING_LICENSE_FORMAT_INVALID: T('A driving licence number looks like DL1420110012345.', 'Driving licence number aisa hota hai: DL1420110012345.', 'ड्राइविंग लाइसेंस नंबर ऐसा होता है: DL1420110012345।'),\n        VOTER_ID_FORMAT_INVALID: T('A Voter ID looks like ABC1234567 (3 letters + 7 digits).', 'Voter ID aisa hota hai: ABC1234567 (3 letters + 7 digits).', 'वोटर ID ऐसा होता है: ABC1234567 (3 अक्षर + 7 अंक)।')\n      }[code] || T('This ID number is not valid.', 'Ye ID number sahi nahi hai.', 'यह ID नंबर सही नहीं है।');\n      return why + '\\n' + T('Please send the ID type and number again.', 'Please ID type aur number dobara bhejiye.', 'कृपया ID का प्रकार और नंबर फिर से भेजिए।');\n    },\n    summary: s => T(\n`Please check your booking:\n👤 ${s.name}\n🛏️ ${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}\n📅 ${dshow(s.ci)} to ${dshow(s.co)} (${s.nights} night${s.nights > 1 ? 's' : ''})\n👥 ${s.guests} guest${s.guests > 1 ? 's' : ''}\n🪪 ${ID_TYPES[s.idt]} ${s.idMasked}\n💰 Total: ${P(s.total)} (pay at hotel)\n\nReply YES to send the booking request, or NO to start again.`,\n`Apni booking check kijiye:\n👤 ${s.name}\n🛏️ ${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}\n📅 ${dshow(s.ci)} se ${dshow(s.co)} (${s.nights} raat)\n👥 ${s.guests} guests\n🪪 ${ID_TYPES[s.idt]} ${s.idMasked}\n💰 Total: ${P(s.total)} (payment hotel par)\n\nBooking request bhejne ke liye YES likhiye, dobara shuru karne ke liye NO.`,\n`कृपया अपनी बुकिंग जाँचिए:\n👤 ${s.name}\n🛏️ ${s.ac ? s.ac + ' AC' : ''}${s.ac && s.nac ? ' + ' : ''}${s.nac ? s.nac + ' Non-AC' : ''}\n📅 ${dshow(s.ci)} से ${dshow(s.co)} (${s.nights} रात)\n👥 ${s.guests} मेहमान\n🪪 ${ID_TYPES[s.idt]} ${s.idMasked}\n💰 कुल: ${P(s.total)} (भुगतान होटल में)\n\nबुकिंग रिक्वेस्ट भेजने के लिए YES लिखिए, दोबारा शुरू करने के लिए NO।`),\n    created: (code, s) => T(\n`Your booking request ${code} is received, but it is NOT confirmed yet. ⏳\n${s.rooms}, ${dshow(s.ci)} to ${dshow(s.co)}, total ${P(s.total)}, pay at hotel.\nThe receptionist will approve it within 30 minutes and I will message you here. Cancellation is possible within 6 hours.`,\n`Aapki booking request ${code} mil gayi hai, par abhi confirm NAHI hui hai. ⏳\n${s.rooms}, ${dshow(s.ci)} se ${dshow(s.co)}, total ${P(s.total)}, payment hotel par.\nReceptionist 30 minute ke andar approve karenge aur main yahin aapko message karunga. 6 ghante ke andar cancel kar sakte hain.`,\n`आपकी बुकिंग रिक्वेस्ट ${code} मिल गई है, पर अभी कन्फर्म नहीं हुई है। ⏳\n${s.rooms}, ${dshow(s.ci)} से ${dshow(s.co)}, कुल ${P(s.total)}, भुगतान होटल में।\nरिसेप्शनिस्ट 30 मिनट में अप्रूव करेंगे और मैं यहीं आपको मैसेज करूँगा। 6 घंटे के अंदर कैंसिल कर सकते हैं।`),\n    breakdown: s => {\n      const n = s.nights, L1 = [];\n      if (s.ac) L1.push(`AC: ${s.ac} x ${P(c.ac)} x ${n} ${T('night', 'raat', 'रात')} = ${P(s.ac * c.ac * n)}`);\n      if (s.nac) L1.push(`Non-AC: ${s.nac} x ${P(c.nac)} x ${n} ${T('night', 'raat', 'रात')} = ${P(s.nac * c.nac * n)}`);\n      return T('How the total is calculated:', 'Total aise bana hai:', 'कुल राशि ऐसे बनी है:') + '\\n' + L1.join('\\n') + '\\n' + T('Total', 'Total', 'कुल') + ': ' + P(s.total) + '\\n\\n' + T('Rate x rooms x nights, no extra charges.', 'Rate x rooms x raat, koi extra charge nahi.', 'रेट x कमरे x रात, कोई अतिरिक्त शुल्क नहीं।');\n    },\n    reset: () => T(`No problem, I have cleared this booking. Type \"menu\" to start again.`, `Theek hai, ye booking maine hata di. Dobara shuru karne ke liye \"menu\" likhiye.`, `ठीक है, मैंने यह बुकिंग हटा दी। फिर शुरू करने के लिए \"menu\" लिखिए।`),\n    dupe: () => T(`You already have a request for these dates. Send 3 to see its status.`, `In dates ke liye aapki request pehle se hai. Status ke liye 3 bhejiye.`, `इन तारीखों के लिए आपकी रिक्वेस्ट पहले से है। स्टेटस के लिए 3 भेजिए।`),\n    dbError: () => T(`Sorry, something went wrong on our side. Please reply YES to try again.`, `Sorry, hamari taraf se kuch gadbad ho gayi. Dobara try karne ke liye YES likhiye.`, `क्षमा करें, हमारी तरफ से कुछ गड़बड़ हो गई। फिर कोशिश के लिए YES लिखिए।`),\n    noBooking: () => T(`I could not find a booking for your number. Type 1 to make one.`, `Aapke number par koi booking nahi mili. Booking ke liye 1 bhejiye.`, `आपके नंबर पर कोई बुकिंग नहीं मिली। बुकिंग के लिए 1 भेजिए।`),\n    statusOne: b => {\n      const base = `${b.code}: ${b.rooms}, ${b.ci} to ${b.co}, ${P(b.total)}`;\n      const m = {\n        PENDING: T(`⏳ ${base}\\nNOT confirmed yet. Waiting for receptionist approval (about ${b.mins} min left). I will message you as soon as it is decided.`, `⏳ ${base}\\nAbhi confirm NAHI hui. Receptionist ke approval ka wait hai (lagbhag ${b.mins} minute bache). Decision hote hi main message karunga.`, `⏳ ${base}\\nअभी कन्फर्म नहीं हुई। रिसेप्शनिस्ट के अप्रूवल का इंतज़ार है (लगभग ${b.mins} मिनट बचे)। फैसला होते ही मैं मैसेज करूँगा।`),\n        CONFIRMED: T(`✅ ${base}\\nCONFIRMED. Please carry your original photo ID.`, `✅ ${base}\\nCONFIRMED hai. Original photo ID saath laayein.`, `✅ ${base}\\nकन्फर्म है। कृपया ओरिजिनल फोटो ID साथ लाएं।`),\n        REJECTED: T(`❌ ${base}\\nNot approved.${b.reason ? ' Reason: ' + b.reason + '.' : ''} Send 1 to try other dates or rooms.`, `❌ ${base}\\nApprove nahi hui.${b.reason ? ' Reason: ' + b.reason + '.' : ''} Dusri dates ya rooms ke liye 1 bhejiye.`, `❌ ${base}\\nअप्रूव नहीं हुई।${b.reason ? ' कारण: ' + b.reason + '।' : ''} दूसरी तारीख या कमरे के लिए 1 भेजिए।`),\n        EXPIRED: T(`⌛ ${base}\\nNOT confirmed: it was not approved in time and the rooms were released. Send 1 to request again.`, `⌛ ${base}\\nConfirm NAHI hui: time par approve nahi hui aur rooms release ho gaye. Dobara request ke liye 1 bhejiye.`, `⌛ ${base}\\nकन्फर्म नहीं हुई: समय पर अप्रूव नहीं हुई और कमरे छोड़ दिए गए। फिर रिक्वेस्ट के लिए 1 भेजिए।`),\n        CANCELLED: T(`🚫 ${base}\\nCancelled.`, `🚫 ${base}\\nCancel ho chuki hai.`, `🚫 ${base}\\nरद्द हो चुकी है।`)\n      };\n      return m[b.status] || base;\n    },\n    cancelAsk: b => T(`Do you want to cancel booking ${b.code} (${b.rooms}, ${b.ci} to ${b.co})? Reply YES or NO.`, `Kya aap booking ${b.code} (${b.rooms}, ${b.ci} se ${b.co}) cancel karna chahte hain? YES ya NO likhiye.`, `क्या आप बुकिंग ${b.code} (${b.rooms}, ${b.ci} से ${b.co}) कैंसिल करना चाहते हैं? YES या NO लिखिए।`),\n    cannotCancel: () => T(`I could not find a booking that can be cancelled. Cancellation is possible only within 6 hours of booking. Send 5 to talk to the receptionist.`, `Cancel ho sake aisi booking nahi mili. Cancel sirf booking ke 6 ghante ke andar ho sakti hai. Receptionist se baat ke liye 5 bhejiye.`, `कैंसिल हो सके ऐसी बुकिंग नहीं मिली। कैंसिल केवल बुकिंग के 6 घंटे के अंदर हो सकता है। रिसेप्शनिस्ट से बात के लिए 5 भेजिए।`),\n    cancelled: code => T(`Booking ${code} has been cancelled. ✅`, `Booking ${code} cancel ho gayi hai. ✅`, `बुकिंग ${code} कैंसिल हो गई है। ✅`),\n    cancelFailed: () => T(`I could not cancel it (it may already be cancelled or too old). Send 5 to talk to the receptionist.`, `Cancel nahi ho payi (shayad pehle hi cancel hai ya bahut purani hai). Receptionist se baat ke liye 5 bhejiye.`, `कैंसिल नहीं हो पाई (शायद पहले ही कैंसिल है या बहुत पुरानी है)। रिसेप्शनिस्ट से बात के लिए 5 भेजिए।`),\n    help: () => T(`I have informed the receptionist. They will contact you as soon as possible. 🙏`, `Maine receptionist ko bata diya hai. Wo jaldi aapse sampark karenge. 🙏`, `मैंने रिसेप्शनिस्ट को बता दिया है। वे जल्द ही आपसे संपर्क करेंगे। 🙏`),\n    helpAlert: (phone, txt) => `🙋 Guest needs help\\n+${phone}\\nMessage: \"${String(txt).slice(0, 300)}\"\\nPlease contact the guest.`\n  };\n};\nconst ackRooms = (L, s) => {\n  const r = (s.ac ? s.ac + ' AC' : '') + (s.ac && s.nac ? ' + ' : '') + (s.nac ? s.nac + ' Non-AC' : '');\n  return ({ eng: `Noted: ${r} room(s). `, hin: `Note kar liya: ${r} room. `, dev: `नोट कर लिया: ${r} कमरे। ` })[L] || '';\n};\nconst takenMsg = L => ({ eng: 'Sorry, those rooms were just taken by someone else. Please send your room requirement again or try other dates.', hin: 'Sorry, ye rooms abhi kisi aur ne le liye. Apni room requirement dobara bhejiye ya dusri dates try kijiye.', dev: 'क्षमा करें, वे कमरे अभी किसी और ने ले लिए। कृपया अपनी ज़रूरत फिर से भेजिए या दूसरी तारीखें चुनिए।' })[L] || '';\nconst roomsText = s => (s.ac ? s.ac + ' AC' : '') + (s.ac && s.nac ? ' + ' : '') + (s.nac ? s.nac + ' Non-AC' : '');\n\nconst techErr = L => ({ eng: 'Sorry, we had a small technical problem. Please send your last message again.', hin: 'Sorry, thodi technical problem aa gayi. Apna last message dobara bhejiye.', dev: 'क्षमा करें, थोड़ी तकनीकी समस्या आ गई। कृपया अपना पिछला संदेश फिर से भेजिए।' })[L] || '';\n\nconst cfgOf = r => ({ hotel: r.hotel_name || 'our hotel', ac: Number(r.ac_rate) || 3000, nac: Number(r.nonac_rate) || 1800, maxg: Number(r.max_guests) || 4, cot: String(r.checkout_time || '11:00'), rec: r.rec_phone || '' });\nconst sqq = s => String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\").replace(/[\\r\\n]+/g, ' ');\nconst nightsOf = (ci, co) => Math.round((new Date(co + 'T00:00:00Z') - new Date(ci + 'T00:00:00Z')) / 86400e3);\nconst maskId = n => 'X'.repeat(Math.max(0, String(n).length - 4)) + String(n).slice(-4);\n\n// ===== BRAIN POST: turns the database answer into the next guest message =====\nconst plan = $('Brain').first().json;\nconst msg = $('Clean Message').first().json;\nconst ctxRow = (() => { try { return $('Load Context').first().json; } catch (e) { return {}; } })();\nconst from = String(msg.from).replace(/\\D/g, '');\nconst L = msg.lang || 'eng';\nconst c = cfgOf(ctxRow), M = mk(L, c);\nconst sd = $getWorkflowStaticData('global');\nsd.flow = sd.flow || {};\nlet s = sd.flow[from] || { step: 'IDLE' };\nconst save = () => { s.ts = Date.now(); sd.flow[from] = s; };\nconst res = $input.all().map(i => i.json).filter(r => r && typeof r === 'object');\nconst r0 = res.find(r => r.booking_code !== undefined || r.cancelled_rows !== undefined || r.can_book !== undefined || r.date_check !== undefined) || res[0] || {};\nconst reply = t => [{ json: { output: t } }];\n\ntry {\n  if (!res.length || r0.error || r0.message && !r0.booking_code && r0.can_book === undefined && r0.cancelled_rows === undefined) return reply(plan.kind === 'create' ? M.dbError() : techErr(L));\n  if (plan.kind === 'check') {\n    if (r0.date_check !== 'OK') { s.ci = s.co = null; s.step = 'DATES'; save(); return reply(M.badOrder()); }\n    if (r0.can_book === 'YES') {\n      s.total = Number(r0.total_amount); s.nights = Number(r0.days) || s.nights; s.step = 'GUESTS';\n      save(); return reply((plan.prefix || '') + M.askGuests(s));\n    }\n    s.total = null; s.ac = 0; s.nac = 0; s.step = 'ROOMS'; save();\n    return reply(M.notAvail({ ci: s.ci, co: s.co, ac_available: Number(r0.ac_available) || 0, nonac_available: Number(r0.nonac_available) || 0 }));\n  }\n  if (plan.kind === 'create') {\n    const code = String(r0.booking_code || ''), result = String(r0.result || '');\n    if (result === 'OK' && code) {\n      const out = M.created(code, { rooms: roomsText(s), ci: s.ci, co: s.co, total: s.total });\n      delete sd.flow[from];                      // wipe the draft, including the ID number\n      return reply(out);\n    }\n    s.step = 'CONFIRM';\n    if (result === 'DUPLICATE_BOOKING') { delete sd.flow[from]; return reply(M.dupe()); }\n    if (/^NOT_ENOUGH/.test(result)) { s.total = null; s.ac = 0; s.nac = 0; s.step = 'ROOMS'; save(); return reply(takenMsg(L)); }\n    if (/^INVALID_ID|ID_NOT_PROVIDED/.test(result)) { s.idn = null; s.step = 'ID'; save(); return reply(result.startsWith('INVALID_ID_') ? M.idBad(result.replace('INVALID_ID_', '')) : M.askId()); }\n    if (result === 'GUESTS_EXCEED_CAPACITY') { s.guests = null; s.step = 'GUESTS'; save(); return reply(M.askGuestsOnly()); }\n    if (result === 'INVALID_DATES') { s.ci = s.co = null; s.total = null; s.step = 'DATES'; save(); return reply(M.askDates()); }\n    if (result === 'INVALID_NAME') { s.name = null; s.step = 'NAME'; save(); return reply(M.askName()); }\n    save(); return reply(M.dbError());\n  }\n  if (plan.kind === 'cancel') {\n    const ok = Number(r0.cancelled_rows) >= 1;\n    delete sd.flow[from];\n    return reply(ok ? M.cancelled(plan.code) : M.cancelFailed());\n  }\n  return reply(M.welcome());\n} catch (e) { return reply(M.dbError()); }\n"
+      },
+      "id": "a6ffb4fb-f5ab-4bc9-af32-bd4ca65be0f4",
+      "name": "Brain Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        -1450
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "YOUR_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ String($json.rec_phone).replace(/\\D/g,'') }}",
+        "textBody": "={{ $json.alert }}",
+        "additionalFields": {}
+      },
+      "id": "ffee5014-a7b0-4d6b-b070-a6d58adf77e6",
+      "name": "Send Help Alert",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1888,
+        -1340
+      ],
+      "webhookId": "2fb859ee-c282-4487-b2a1-aaffe6fc8a65",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { output: $('Brain').first().json.output } }];"
+      },
+      "id": "2e17e6d5-1162-402a-885d-bb2d82233026",
+      "name": "Help Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        -1340
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WA Verify": {
+      "main": [
+        [
+          {
+            "node": "Check Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Verify": {
+      "main": [
+        [
+          {
+            "node": "Respond Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WA Messages": {
+      "main": [
+        [
+          {
+            "node": "Clean Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Message": {
+      "main": [
+        [
+          {
+            "node": "Session Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session Update": {
+      "main": [
+        [
+          {
+            "node": "Session Get",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session Get": {
+      "main": [
+        [
+          {
+            "node": "Session Active?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session Active?": {
+      "main": [
+        [
+          {
+            "node": "Is Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Text?": {
+      "main": [
+        [
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send non-text reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hotel AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Latest Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retry Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reply": {
+      "main": [
+        [
+          {
+            "node": "Clear Busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Check": {
+      "main": [
+        [
+          {
+            "node": "Retry?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry?": {
+      "main": [
+        [
+          {
+            "node": "First time?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send busy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First time?": {
+      "main": [
+        [
+          {
+            "node": "Send wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send wait": {
+      "main": [
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          {
+            "node": "Hotel AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send busy": {
+      "main": [
+        [
+          {
+            "node": "Clear Busy 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending": {
+      "main": [
+        [
+          {
+            "node": "Alert Receptionist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Receptionist": {
+      "main": [
+        [
+          {
+            "node": "Mark Alerted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Mark Expired": {
+      "main": [
+        [
+          {
+            "node": "Get Unnotified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Page": {
+      "main": [
+        [
+          {
+            "node": "Load Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Booking": {
+      "main": [
+        [
+          {
+            "node": "Render Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Page": {
+      "main": [
+        [
+          {
+            "node": "Respond Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Webhook": {
+      "main": [
+        [
+          {
+            "node": "Apply Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Decision": {
+      "main": [
+        [
+          {
+            "node": "Load After",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load After": {
+      "main": [
+        [
+          {
+            "node": "Decision Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Result": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral Cloud Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Hotel AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify?": {
+      "main": [
+        [
+          {
+            "node": "Notify Guest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Guest": {
+      "main": [
+        [
+          {
+            "node": "Mark Guest Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Unnotified": {
+      "main": [
+        [
+          {
+            "node": "Build Sweep Msg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sweep Msg": {
+      "main": [
+        [
+          {
+            "node": "Bump Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bump Attempt": {
+      "main": [
+        [
+          {
+            "node": "Send Sweep Msg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Sweep Msg": {
+      "main": [
+        [
+          {
+            "node": "Mark Swept Notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Latest Bookings": {
+      "main": [
+        [
+          {
+            "node": "Reply Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply Guard": {
+      "main": [
+        [
+          {
+            "node": "Send reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 20 seconds": {
+      "main": [
+        [
+          {
+            "node": "Get Pending",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mark Expired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Brain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brain": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Send reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Hotel AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run SQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Help Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run SQL": {
+      "main": [
+        [
+          {
+            "node": "Brain Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brain Post": {
+      "main": [
+        [
+          {
+            "node": "Send reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Help Alert": {
+      "main": [
+        [
+          {
+            "node": "Help Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Help Reply": {
+      "main": [
+        [
+          {
+            "node": "Send reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
