@@ -4,7 +4,7 @@ A WhatsApp receptionist for a 30-room hotel. Guests book rooms, check prices, se
 
 Built with **n8n**, **MySQL**, the **WhatsApp Cloud API** and an LLM that is used only for general questions.
 
-   > Demo video: [Watch the demo](docs/demo.mp4)
+> Demo video: [Watch the demo](docs/demo.mp4)
 
 ## Design approach
 
